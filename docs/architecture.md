@@ -66,7 +66,7 @@ All time/positions are in **integer samples** at the master sample rate (`sample
 
 ```jsonc
 {
-  "schemaVersion": 1,              // bumped on any IR-shape or cache-key change → invalidates cache
+  "schemaVersion": 2,              // bumped on any IR-shape or cache-key change → invalidates cache
   "sampleRate": 48000,             // master rate; all sample positions are at this rate
   "channels": 1,                   // v0.1 is mono end-to-end (Kokoro is mono); stereo is a later phase
   "episode": {
@@ -85,7 +85,7 @@ All time/positions are in **integer samples** at the master sample rate (`sample
         "kind": "cache",           // "cache" | "file"
         "path": ".soundstage/cache/<hash>.wav",
         "hash": "<sha256>",        // present for kind:"cache"; used in the cache report
-        "voiceUnitId": "v3"        // back-ref to the Voice node for per-segment reporting
+        "voiceUnitId": 3,           // back-ref to the Voice node for per-segment reporting (integer index)
       },
       "trackId": "voice",
       "startSample": 0,            // absolute position on the master timeline
@@ -96,6 +96,7 @@ All time/positions are in **integer samples** at the master sample rate (`sample
         "in":  { "durationSamples": 0,    "curve": "tri" },
         "out": { "durationSamples": 0,    "curve": "tri" }
       },
+      "loop": true,                // optional (bed clips only); T8b realizes via ffmpeg `aloop` filter
       "crossfadeIntoNext": {       // optional; set when a <Crossfade> separates this clip from the next sibling
         "durationSamples": 36000,  // 0.75s @ 48k
         "curve": "tri"

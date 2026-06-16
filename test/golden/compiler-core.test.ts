@@ -120,9 +120,10 @@ async function probeRmsDb(path: string, startSample: number, endSample: number):
   // Alternatives ordered longest-first so -inf is tried before the [-\d.]+ char class
   // (which would greedily match the leading '-' and stop before 'i').
   const match = stderr.match(/RMS level dB:\s*(-inf|inf|[-\d.]+)/);
-  if (!match) return -Infinity;
+  if (!match) throw new Error(`probeRmsDb: no "RMS level dB" in ffmpeg output for ${path}`);
   const val = match[1]!;
-  if (val === "-inf" || val === "inf") return -Infinity;
+  if (val === "inf") throw new Error(`probeRmsDb: unexpected +inf RMS — audio is likely corrupt or clipping for ${path}`);
+  if (val === "-inf") return -Infinity;
   return parseFloat(val);
 }
 
@@ -198,29 +199,30 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Anchor: verify fixture durations are in the known synthetic-adapter range.
-// SyntheticAdapter produces 0.2s–2.0s at 24kHz (4800–48000 samples); after
-// 24k→48k upsampling durX = durX_cache * 2, so range is 9600–96000 at 48kHz.
-// This assertion is INDEPENDENT of the * 2 computation — it uses hardcoded
-// bounds derived from the adapter source, so a bug in the upsampling factor
-// would fail here before reaching the duration golden tests.
+// Exact-literal anchor: pin durA/durB/durC to known values derived from the
+// SyntheticAdapter hash formula (SHA-256 of text+voice+speed at 24kHz).
+// These are HARDCODED literals — not computed from durX_cache — so a
+// systematic duration error (e.g. wrong upsampling factor) fails HERE before
+// reaching the duration golden tests, breaking the circular derivation.
+//
+// Derivation (reproducible via node -e):
+//   text="golden test clip alpha"  voice="host"  speed=1.0
+//     → durationSamples@24k = 7441  → @48k = 14882
+//   text="golden test clip beta"   voice="host"  speed=1.0
+//     → durationSamples@24k = 33918 → @48k = 67836
+//   text="golden test clip gamma"  voice="host"  speed=1.0
+//     → durationSamples@24k = 10700 → @48k = 21400
 // ---------------------------------------------------------------------------
 
-describe("fixture sanity: synthetic-adapter durations are in known range", () => {
-  const MIN_AT_48K = 9600;  // 0.2 s × 48000 Hz
-  const MAX_AT_48K = 96000; // 2.0 s × 48000 Hz
-
-  it("durA is in [9600, 96000]", () => {
-    expect(durA).toBeGreaterThanOrEqual(MIN_AT_48K);
-    expect(durA).toBeLessThanOrEqual(MAX_AT_48K);
+describe("fixture sanity: synthetic-adapter durations match known literals", () => {
+  it("durA equals known literal 14882 (7441 × 2 after 24k→48k upsampling)", () => {
+    expect(durA).toBe(14882);
   });
-  it("durB is in [9600, 96000]", () => {
-    expect(durB).toBeGreaterThanOrEqual(MIN_AT_48K);
-    expect(durB).toBeLessThanOrEqual(MAX_AT_48K);
+  it("durB equals known literal 67836 (33918 × 2 after 24k→48k upsampling)", () => {
+    expect(durB).toBe(67836);
   });
-  it("durC is in [9600, 96000]", () => {
-    expect(durC).toBeGreaterThanOrEqual(MIN_AT_48K);
-    expect(durC).toBeLessThanOrEqual(MAX_AT_48K);
+  it("durC equals known literal 21400 (10700 × 2 after 24k→48k upsampling)", () => {
+    expect(durC).toBe(21400);
   });
 });
 
@@ -499,6 +501,86 @@ describe("filter-script snapshot", () => {
     const { filterScript } = compileIR(ir, "/tmp/out.wav");
     expect(filterScript).toMatchSnapshot();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Golden: amix normalize=0 preserves voice lane level (±0.5 dB)
+//
+// footgun: amix default is normalize=1 (each input divided by number of inputs),
+// silently attenuating the voice lane by 1/N factor when N>1.
+// With normalize=0 and per-input volume pre-gains, levels are NOT changed by amix.
+//
+// Test: render wavA through the compiler (which uses amix=normalize=0) and
+// compare its RMS to the raw source rendered without amix (single-input path).
+// A 2-clip IR forces amix with 2 inputs; a 1-clip IR bypasses amix or uses 1-input amix.
+// The key assertion is that the two-clip output has the same RMS at clip A's position
+// as the single-clip output — proving amix does not attenuate the signal.
+// ---------------------------------------------------------------------------
+
+describe("amix normalize=0 preserves voice lane level", () => {
+  it("voice RMS in 2-clip render ≈ voice RMS in 1-clip render (within ±0.5 dB)", async () => {
+    // footgun: amix normalize=0 level preservation
+    // Single-clip IR: only wavA at 0 dB (compiler still routes through amix=normalize=0)
+    const irSingle = buildIR([
+      {
+        id: "c0",
+        sourceRef: { kind: "cache", path: wavA, hash: "a", voiceUnitId: 0 },
+        trackId: "voice",
+        startSample: 0,
+        durationSamples: durA,
+        gainDb: 0,
+      },
+    ]);
+
+    // Two-clip IR: wavA then wavB. We measure only clip A's window in the output.
+    // If amix normalize=0 were actually normalize=1, wavA's level would be halved
+    // relative to the single-clip render.
+    const irDouble = buildIR([
+      {
+        id: "c0",
+        sourceRef: { kind: "cache", path: wavA, hash: "a", voiceUnitId: 0 },
+        trackId: "voice",
+        startSample: 0,
+        durationSamples: durA,
+        gainDb: 0,
+      },
+      {
+        id: "c1",
+        sourceRef: { kind: "cache", path: wavB, hash: "b", voiceUnitId: 1 },
+        trackId: "voice",
+        startSample: durA,
+        durationSamples: durB,
+        gainDb: 0,
+      },
+    ]);
+
+    const outSingle = join(tmpDir, "out_amix_single.wav");
+    const outDouble = join(tmpDir, "out_amix_double.wav");
+
+    const [r1, r2] = await Promise.all([
+      runFfmpeg(compileIR(irSingle, outSingle)),
+      runFfmpeg(compileIR(irDouble, outDouble)),
+    ]);
+    expect(r1.exitCode).toBe(0);
+    expect(r2.exitCode).toBe(0);
+
+    // Measure RMS only within clip A's window (skip transient edges: 10%–90%)
+    const startS = Math.round(durA * 0.1);
+    const endS = Math.round(durA * 0.9);
+
+    const [rmsSingle, rmsDouble] = await Promise.all([
+      probeRmsDb(outSingle, startS, endS),
+      probeRmsDb(outDouble, startS, endS),
+    ]);
+
+    const diff = Math.abs(rmsSingle - rmsDouble);
+    expect(
+      diff,
+      `amix normalize=0: voice RMS in 2-clip (${rmsDouble.toFixed(2)} dBFS) differs from ` +
+      `1-clip (${rmsSingle.toFixed(2)} dBFS) by ${diff.toFixed(2)} dB > 0.5 dB — ` +
+      `amix may be normalizing (dividing by N inputs)`,
+    ).toBeLessThanOrEqual(0.5);
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------

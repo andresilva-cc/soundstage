@@ -70,17 +70,17 @@ export default episode;
     expect(segment.children).toHaveLength(1);
   });
 
-  // AC3 — transform errors surface clearly
+  // AC3 — bundle errors surface clearly
   it("throws on invalid TypeScript syntax with a clear message", async () => {
     const fixtureSrc = `export default <this is not valid tsx !!!`;
     const fixturePath = writeTempTsx(fixtureSrc);
-    await expect(loadTsx(fixturePath)).rejects.toThrow("soundstage: failed to transform");
+    await expect(loadTsx(fixturePath)).rejects.toThrow("soundstage: failed to bundle");
   });
 
-  // Fix 5 — file-read errors surface with the structured message, not a raw Node error
+  // Fix 5 — file errors surface with the structured message, not a raw Node error
   it("throws with structured message for nonexistent file", async () => {
     await expect(loadTsx("/nonexistent/path/composition.tsx")).rejects.toThrow(
-      "soundstage: failed to read",
+      "soundstage: failed to bundle",
     );
   });
 

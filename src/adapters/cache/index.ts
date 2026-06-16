@@ -34,6 +34,8 @@ export interface CacheResult {
   sampleRate: number;
   /** Content hash (hex SHA-256) — same value as the WAV filename stem. */
   hash: string;
+  /** True when the result was served from cache (hit); false when synthesized (miss). */
+  hit: boolean;
 }
 
 export interface CacheOptions {
@@ -208,6 +210,7 @@ export class CacheLayer {
           durationSamples: sidecar.durationSamples,
           sampleRate: sidecar.sampleRate,
           hash,
+          hit: true,
         };
       }
       // Sidecar missing or corrupt: fall through to miss path
@@ -239,6 +242,6 @@ export class CacheLayer {
     // Atomic rename: .tmp → .wav
     await rename(tmpPath, wavPath);
 
-    return { wavPath, durationSamples, sampleRate, hash };
+    return { wavPath, durationSamples, sampleRate, hash, hit: false };
   }
 }

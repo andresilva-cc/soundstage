@@ -11,8 +11,19 @@
 
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
-import * as NodeID3 from "node-id3";
+import { createRequire } from "node:module";
+import type { Tags, TagConstants } from "node-id3";
 import type { ChapterIR, EpisodeIR, IR } from "../ir/phase-b.js";
+
+// node-id3 is CJS. In real Node ESM (esModuleInterop:false), `import * as X`
+// gives a namespace where the CJS exports live under `.default`, NOT on the
+// namespace itself. createRequire bypasses this and loads it as CJS directly,
+// matching what vitest's module transformer also produces.
+const _require = createRequire(import.meta.url);
+const NodeID3 = _require("node-id3") as {
+  write(tags: Tags, path: string): true | Error;
+  TagConstants: typeof TagConstants;
+};
 import { SoundstageError } from "../ir/errors.js";
 import { runFfprobe } from "../probe/ffprobe.js";
 
@@ -70,7 +81,7 @@ export function writeChapterTags(
   // Build chapter entries. The last chapter's endMs is pinned to totalMs so
   // players don't skip/loop past the end (AC: lastChapter.endMs ===
   // Math.round(totalDurationSamples / sampleRate * 1000)).
-  const chapterTags: NodeID3.Tags["chapter"] = chapters.map((ch, i) => {
+  const chapterTags: Tags["chapter"] = chapters.map((ch, i) => {
     const isLast = i === chapters.length - 1;
     const endMs = isLast ? totalMs : samplesToMs(ch.endSample, sampleRate);
     return {
@@ -82,7 +93,7 @@ export function writeChapterTags(
   });
 
   // CTOC: top-level table of contents referencing all chapter element IDs.
-  const tableOfContents: NodeID3.Tags["tableOfContents"] = [
+  const tableOfContents: Tags["tableOfContents"] = [
     {
       elementID: "toc",
       isOrdered: true,
@@ -90,7 +101,7 @@ export function writeChapterTags(
     },
   ];
 
-  const tags: NodeID3.Tags = {
+  const tags: Tags = {
     chapter: chapterTags,
     tableOfContents,
     ...artworkTags,
@@ -143,7 +154,7 @@ export async function runChapterPostPass(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function buildArtworkTags(episode: EpisodeIR): NodeID3.Tags {
+function buildArtworkTags(episode: EpisodeIR): Tags {
   if (!episode.artwork) return {};
 
   let imageBuffer: Buffer;

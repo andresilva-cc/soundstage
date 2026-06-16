@@ -8,7 +8,8 @@ export type ErrorCode =
   | "E_INVALID_PROP"
   | "E_MAX_DEPTH"
   | "E_MULTI_BED_UNSUPPORTED"
-  | "E_ARTWORK_NOT_FOUND";
+  | "E_ARTWORK_NOT_FOUND"
+  | "E_NO_DEFAULT_EXPORT";
 
 export class SoundstageError extends Error {
   readonly code: ErrorCode;

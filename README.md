@@ -34,9 +34,12 @@ npx soundstage render examples/changelog.tsx --final
 
 ```sh
 # Prerequisites: Node.js ≥ 20, ffmpeg v8.x on PATH
-npx soundstage render examples/changelog.tsx --draft   # synthetic voices, instant, free
-npx soundstage render examples/changelog.tsx --final   # real Kokoro voice (downloads ~86 MB model on first run)
+npx soundstage render examples/changelog.tsx --draft   # synthetic voices — instant, no install
+npm install kokoro-js                                  # optional: enables the real voice
+npx soundstage render examples/changelog.tsx           # real Kokoro voice (default; downloads ~86 MB model on first run)
 ```
+
+The real voice is powered by [`kokoro-js`](https://www.npmjs.com/package/kokoro-js), an **optional** dependency. Install it for production audio, or use `--draft` for an instant synthetic preview that needs no download. Run the voiced default without it and Soundstage prints a one-line hint on how to enable it.
 
 Edit one `<Voice>` block and re-run — only that segment re-synthesizes. The cache report shows exactly what changed:
 
@@ -68,6 +71,7 @@ Given the **same cache** and a **pinned ffmpeg version**, Soundstage produces a 
 
 - Node.js ≥ 20
 - ffmpeg/ffprobe v8.x on PATH (`brew install ffmpeg` / `apt install ffmpeg`)
+- **Real voices (optional):** the [`kokoro-js`](https://www.npmjs.com/package/kokoro-js) package (`npm install kokoro-js`). Skip it and pass `--draft` for synthetic voices that need no model download.
 
 ## License
 

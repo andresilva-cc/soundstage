@@ -24,8 +24,8 @@ export interface TtsAdapter {
    * Canonicalize provider-specific settings into a deterministic, stable object that
    * is JSON-serialized into the cache key. MUST be order-independent and float-stable
    * (see §4.5). Anything that changes the audio MUST appear here; anything that does
-   * not (e.g. a request timeout) MUST NOT. Do NOT include sampleRate, sampleFmt, or
-   * channels — those are owned by the cache layer's separate `format` field (§4.5).
+   * not (e.g. a request timeout) MUST NOT. Do NOT include voice, sampleRate, sampleFmt,
+   * or channels — those are owned by the cache layer's separate top-level fields (§4.5).
    * Always resolve optional fields to their effective default before returning so that
    * `undefined` and the explicit default never produce different keys.
    */

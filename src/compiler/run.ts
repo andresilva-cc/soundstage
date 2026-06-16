@@ -41,7 +41,7 @@ export async function runFfmpeg(
     `soundstage-fc-${randomBytes(8).toString("hex")}.txt`,
   );
 
-  await writeFile(scriptPath, compiled.filterScript, { encoding: "utf8", mode: 0o600 });
+  await writeFile(scriptPath, compiled.filterScript, { encoding: "utf8", mode: 0o600, flag: "wx" });
 
   // Build full argv: [-i ...] [-filter_complex_script <path>] [output opts...]
   // Splice -filter_complex_script before the output options (after all -i flags).

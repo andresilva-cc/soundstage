@@ -103,19 +103,19 @@ describe("SyntheticAdapter — different input yields different PCM", () => {
   });
 });
 
-// AC5 — canonicalSettings always returns exactly { voice, speed } (W1: exact-shape)
+// AC5 — canonicalSettings returns exactly { speed } — voice is a top-level cache key field (§4.5).
 // Speed defaults to 1.0 so undefined and explicit 1.0 produce the same cache key (W1 arch fix).
 describe("SyntheticAdapter — canonicalSettings", () => {
   const adapter = new SyntheticAdapter();
 
-  it("returns exactly { voice, speed: 1.0 } when speed is not set", () => {
+  it("returns exactly { speed: 1.0 } when speed is not set (no voice — top-level field)", () => {
     const settings = adapter.canonicalSettings(req({ voice: "host" }));
-    expect(settings).toEqual({ voice: "host", speed: 1.0 });
+    expect(settings).toEqual({ speed: 1.0 });
   });
 
-  it("returns exactly { voice, speed } when speed is set explicitly", () => {
+  it("returns exactly { speed } when speed is set explicitly", () => {
     const settings = adapter.canonicalSettings(req({ voice: "host", speed: 1.5 }));
-    expect(settings).toEqual({ voice: "host", speed: 1.5 });
+    expect(settings).toEqual({ speed: 1.5 });
   });
 
   it("undefined speed and explicit 1.0 produce the same settings (no cache-key divergence)", () => {

@@ -52,7 +52,8 @@ export class SyntheticAdapter implements TtsAdapter {
 
   canonicalSettings(req: SynthRequest): Record<string, unknown> {
     // Always emit speed resolved to its default so undefined and 1.0 produce the same key.
-    return { voice: req.voice, speed: req.speed ?? DEFAULT_SPEED };
+    // voice is NOT included here — it is already a top-level field in the cache key (§4.5).
+    return { speed: req.speed ?? DEFAULT_SPEED };
   }
 
   synth(req: SynthRequest): Promise<SynthResult> {

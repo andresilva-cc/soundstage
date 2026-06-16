@@ -455,6 +455,111 @@ describe("AC8 — top-level IR fields", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Segment-crossfade following-clip guard: checks first clip of following Segment
+// ---------------------------------------------------------------------------
+
+describe("Segment-crossfade following-clip guard", () => {
+  it("throws E_CROSSFADE_DURATION when crossfade > first clip of following Segment (not segment total)", () => {
+    // Segment 2 has a short first voice clip (1000 samples) followed by a long clip (200000 samples).
+    // Total segment duration >> crossfade, but first clip < crossfade → must throw.
+    const short = voiceNode(1000, 1, "short");
+    const long = voiceNode(200000, 2, "long");
+    const seg2 = segmentNode("Topic", [short, long]);
+
+    const seg1voice = voiceNode(100000, 0, "seg1");
+    const seg1 = segmentNode("Intro", [seg1voice]);
+
+    // crossfade = 1.0 * 48000 = 48000 samples > 1000 (first clip of seg2) → E_CROSSFADE_DURATION
+    const tree = episode([seg1, crossfadeNode(1.0), seg2]);
+    expect(() => phaseB(tree)).toThrow(
+      expect.objectContaining({ code: "E_CROSSFADE_DURATION" }),
+    );
+    expect(() => phaseB(tree)).toThrow(SoundstageError);
+  });
+
+  it("valid crossfade between segments: startSample correct, chapters span correctly", () => {
+    // Segment 1: one voice clip of 100000 samples
+    // Crossfade: 0.5s = 24000 samples at 48kHz
+    // Segment 2: first voice clip 48000 samples (> crossfade), second 60000 samples
+    const v1 = voiceNode(100000, 0, "s1v1");
+    const v2 = voiceNode(48000, 1, "s2v1"); // first clip of seg2
+    const v3 = voiceNode(60000, 2, "s2v2");
+    const seg1 = segmentNode("Intro", [v1]);
+    const seg2 = segmentNode("Main", [v2, v3]);
+
+    const overlapSamples = Math.round(0.5 * SAMPLE_RATE); // 24000
+    const tree = episode([seg1, crossfadeNode(0.5), seg2]);
+    const ir = phaseB(tree);
+
+    const voiceClips = ir.clips.filter(c => c.trackId === "voice");
+    expect(voiceClips).toHaveLength(3);
+
+    // seg1 voice starts at 0
+    expect(voiceClips[0]!.startSample).toBe(0);
+    expect(voiceClips[0]!.durationSamples).toBe(100000);
+
+    // seg2 first voice starts at cursor - overlap: 100000 - 24000 = 76000
+    expect(voiceClips[1]!.startSample).toBe(100000 - overlapSamples); // 76000
+    expect(voiceClips[1]!.durationSamples).toBe(48000);
+
+    // seg2 second voice starts after first: 76000 + 48000 = 124000
+    expect(voiceClips[2]!.startSample).toBe(76000 + 48000); // 124000
+
+    // Chapter spans
+    const intro = ir.chapters.find(c => c.title === "Intro")!;
+    const main = ir.chapters.find(c => c.title === "Main")!;
+    expect(intro).toBeDefined();
+    expect(main).toBeDefined();
+
+    expect(intro.startSample).toBe(0);
+    expect(intro.endSample).toBe(100000); // lastClip.start + lastClip.dur = 0 + 100000
+
+    expect(main.startSample).toBe(76000);
+    expect(main.endSample).toBe(124000 + 60000); // 184000
+  });
+
+  it("multi-clip Seg → Crossfade → multi-clip Seg: crossfadeIntoNext on LAST clip of Seg1, startSample of FIRST clip of Seg2 shifted", () => {
+    // Seg1 = [V1(80000), V2(70000)], Crossfade(0.5s=24000), Seg2 = [V3(48000), V4(60000)]
+    // Crossfade must be set on V2 (last of Seg1), not V1.
+    // Seg2's first clip V3 (48000 > 24000) must be the boundary → no throw.
+    // V3.startSample = (80000 + 70000) - 24000 = 126000
+    const v1 = voiceNode(80000, 0, "s1v1");
+    const v2 = voiceNode(70000, 1, "s1v2"); // last clip of Seg1 — crossfadeIntoNext must land here
+    const v3 = voiceNode(48000, 2, "s2v1"); // first clip of Seg2 — boundary for guard
+    const v4 = voiceNode(60000, 3, "s2v2");
+    const seg1 = segmentNode("Seg1", [v1, v2]);
+    const seg2 = segmentNode("Seg2", [v3, v4]);
+
+    const overlapSamples = Math.round(0.5 * SAMPLE_RATE); // 24000
+    const tree = episode([seg1, crossfadeNode(0.5), seg2]);
+    const ir = phaseB(tree);
+
+    const voiceClips = ir.clips.filter(c => c.trackId === "voice");
+    expect(voiceClips).toHaveLength(4);
+
+    // V1 at 0, V2 at 80000
+    expect(voiceClips[0]!.startSample).toBe(0);
+    expect(voiceClips[1]!.startSample).toBe(80000);
+
+    // crossfadeIntoNext must be on V2 (voiceClips[1]), NOT V1
+    expect(voiceClips[0]!.crossfadeIntoNext).toBeUndefined();
+    expect(voiceClips[1]!.crossfadeIntoNext).toBeDefined();
+    expect(voiceClips[1]!.crossfadeIntoNext!.durationSamples).toBe(overlapSamples);
+
+    // V3 starts at (80000+70000) - 24000 = 126000
+    expect(voiceClips[2]!.startSample).toBe(150000 - overlapSamples); // 126000
+    expect(voiceClips[3]!.startSample).toBe(126000 + 48000); // 174000
+
+    // Chapter spans
+    const ch1 = ir.chapters.find(c => c.title === "Seg1")!;
+    const ch2 = ir.chapters.find(c => c.title === "Seg2")!;
+    expect(ch1.endSample).toBe(80000 + 70000); // 150000 (last clip of Seg1)
+    expect(ch2.startSample).toBe(126000); // first clip of Seg2
+    expect(ch2.endSample).toBe(174000 + 60000); // 234000
+  });
+});
+
+// ---------------------------------------------------------------------------
 // AC 9 (snapshot): compound fixture covering all Phase B features
 // Includes: sequential clips, Segment chapter, Crossfade, MusicBed, Silence.
 // Removing any feature from the implementation will break this snapshot.

@@ -147,8 +147,9 @@ describe("validation — crossfade boundary", () => {
     expect(() => validateTree(tree)).not.toThrow();
   });
 
-  it("throws E_CROSSFADE_BOUNDARY when neighbor is a Segment (not an audio sibling)", () => {
-    // <Crossfade> between two <Segment>s must be rejected
+  it("allows <Crossfade> between two <Segment>s (Segment is an audio-producing sibling)", () => {
+    // <Crossfade> between two <Segment>s is valid: the crossfade blends the last
+    // clip of the first Segment with the first clip of the second Segment.
     const tree = episode({},
       segment({ title: "A" },
         voice({ voice: "host" }, "One"),
@@ -158,10 +159,7 @@ describe("validation — crossfade boundary", () => {
         voice({ voice: "host" }, "Two"),
       ),
     );
-    let thrown: unknown;
-    try { validateTree(tree); } catch (e) { thrown = e; }
-    expect(thrown).toBeInstanceOf(SoundstageError);
-    expect((thrown as SoundstageError).code).toBe("E_CROSSFADE_BOUNDARY");
+    expect(() => validateTree(tree)).not.toThrow();
   });
 
   it("throws E_CROSSFADE_BOUNDARY when neighbor is an Episode (not an audio sibling)", () => {

@@ -196,16 +196,26 @@ function walkSiblings(
     }
 
     const nodePlacedStart = cursor;
+    const clipsBeforeNode = state.clips.length;
     const nodeDuration = placeNode(el, nodePlacedStart, state);
 
     // Check the following clip only when we just applied a crossfade.
     // Use the captured precedingCrossfadeClip — not a re-scan — to avoid the
     // wrong-clip-in-chain bug when multiple crossfades appear in sequence.
     if (pendingCrossfadeOverlap !== null && precedingCrossfadeClip !== null) {
-      if (pendingCrossfadeOverlap > nodeDuration) {
+      // For Segment nodes, the crossfade blends into the segment's FIRST audio
+      // clip (not the whole segment). Resolve the boundary clip duration.
+      const firstFollowingClip = state.clips
+        .slice(clipsBeforeNode)
+        .find(c => c.trackId === "voice");
+      const boundaryDuration = firstFollowingClip !== undefined
+        ? firstFollowingClip.durationSamples
+        : nodeDuration;
+
+      if (pendingCrossfadeOverlap > boundaryDuration) {
         throw new SoundstageError(
           "E_CROSSFADE_DURATION",
-          `<Crossfade> durationSamples (${pendingCrossfadeOverlap}) exceeds following clip durationSamples (${nodeDuration})`,
+          `<Crossfade> durationSamples (${pendingCrossfadeOverlap}) exceeds following clip durationSamples (${boundaryDuration})`,
           "<Crossfade>",
         );
       }

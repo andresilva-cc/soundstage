@@ -357,6 +357,85 @@ describe("AC6 — validation before synthesis", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Rate conversion: native 24kHz durationSamples must be scaled to master rate
+// ---------------------------------------------------------------------------
+
+describe("Rate conversion — native 24kHz → master rate scaling", () => {
+  it("Voice durationSamples at 48kHz === Math.round(native * 48000 / 24000) ≈ 2×", async () => {
+    // Capture the raw native durationSamples returned by the adapter before
+    // PhaseA's rate conversion runs. We wrap the adapter's synth() call.
+    let nativeDurationSamples: number | null = null;
+    const capturingAdapter = new SyntheticAdapter();
+    const origSynth = capturingAdapter.synth.bind(capturingAdapter);
+    capturingAdapter.synth = async (req) => {
+      const result = await origSynth(req);
+      nativeDurationSamples = result.durationSamples;
+      return result;
+    };
+
+    const rateDir = join(tmpDir, "rate-48k-cache");
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(rateDir, { recursive: true }));
+    const rateCache = new CacheLayer(capturingAdapter as TtsAdapter, rateDir);
+
+    // Master rate = 48000, native = 24000 → conversion factor = 2
+    const tree: SoundstageElement = {
+      type: "Episode",
+      props: { title: "Rate Test", sampleRate: 48000, voice: "host" },
+      children: [makeVoice("rate conversion test utterance", "host")],
+    };
+
+    const resolved = await phaseA(tree, { cache: rateCache, baseDir: tmpDir });
+
+    expect(nativeDurationSamples).not.toBeNull();
+
+    const children = resolved.children.filter(
+      (c): c is SoundstageElement => typeof c === "object" && c !== null && "type" in c,
+    );
+    const voiceEl = children[0]!;
+    const resolvedDuration = voiceEl.props["durationSamples"] as number;
+
+    const expected = Math.round(nativeDurationSamples! * 48000 / 24000);
+    expect(resolvedDuration).toBe(expected);
+    // Sanity: adapter returns 24kHz audio, so scaled value must be ≈ 2× native
+    expect(resolvedDuration).toBe(nativeDurationSamples! * 2);
+  });
+
+  it("passthrough: sampleRate=24000 → durationSamples === native (no scaling)", async () => {
+    let nativeDurationSamples: number | null = null;
+    const capturingAdapter = new SyntheticAdapter();
+    const origSynth = capturingAdapter.synth.bind(capturingAdapter);
+    capturingAdapter.synth = async (req) => {
+      const result = await origSynth(req);
+      nativeDurationSamples = result.durationSamples;
+      return result;
+    };
+
+    const passthroughDir = join(tmpDir, "rate-24k-cache");
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(passthroughDir, { recursive: true }));
+    const passthroughCache = new CacheLayer(capturingAdapter as TtsAdapter, passthroughDir);
+
+    // Master rate = 24000 = native rate → durationSamples must pass through unchanged
+    const tree: SoundstageElement = {
+      type: "Episode",
+      props: { title: "Passthrough Test", sampleRate: 24000, voice: "host" },
+      children: [makeVoice("rate passthrough test utterance", "host")],
+    };
+
+    const resolved = await phaseA(tree, { cache: passthroughCache, baseDir: tmpDir });
+
+    expect(nativeDurationSamples).not.toBeNull();
+
+    const children = resolved.children.filter(
+      (c): c is SoundstageElement => typeof c === "object" && c !== null && "type" in c,
+    );
+    const voiceEl = children[0]!;
+    const resolvedDuration = voiceEl.props["durationSamples"] as number;
+
+    expect(resolvedDuration).toBe(nativeDurationSamples!);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // AC 7: Warm-cache — adapter.synth fired only once across two phaseA runs
 // ---------------------------------------------------------------------------
 

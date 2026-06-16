@@ -88,12 +88,21 @@ async function resolveNode(
       voiceUnitId,
     };
 
+    // Convert native TTS sample rate → master sample rate (§3.2: all IR positions
+    // are at the master rate). The cache sidecar stores samples at the adapter's
+    // native rate (e.g. 24000 Hz for Kokoro/synthetic); the compiler resamples on
+    // read, so the IR must express durations at episodeSampleRate.
+    const durationAtMasterRate =
+      result.sampleRate === episodeSampleRate
+        ? result.durationSamples
+        : Math.round(result.durationSamples * episodeSampleRate / result.sampleRate);
+
     return {
       type: node.type,
       props: {
         ...node.props,
         sourceRef,
-        durationSamples: result.durationSamples,
+        durationSamples: durationAtMasterRate,
       },
       children: node.children,
     };

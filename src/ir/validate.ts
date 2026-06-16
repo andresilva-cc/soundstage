@@ -23,11 +23,14 @@ const SRC_PROPS: Record<string, string[]> = {
   [COMPONENT_NAMES.Clip]: ["src"],
 };
 
-// Audio-producing node types valid as Crossfade neighbors
+// Audio-producing node types valid as Crossfade neighbors.
+// Segment is included because it contains audio children; a crossfade between
+// two Segments blends the last clip of one with the first clip of the other.
 const AUDIO_SIBLING_TYPES = new Set([
   COMPONENT_NAMES.Voice,
   COMPONENT_NAMES.Clip,
   COMPONENT_NAMES.Silence,
+  COMPONENT_NAMES.Segment,
 ]);
 
 function describeNode(node: SoundstageElement): string {

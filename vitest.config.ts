@@ -1,6 +1,23 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: [
+      {
+        find: "soundstage/jsx-runtime",
+        replacement: fileURLToPath(
+          new URL("./src/jsx-runtime/index.ts", import.meta.url),
+        ),
+      },
+      {
+        find: "soundstage",
+        replacement: fileURLToPath(
+          new URL("./src/index.ts", import.meta.url),
+        ),
+      },
+    ],
+  },
   esbuild: {
     jsx: "automatic",
     jsxImportSource: "soundstage",

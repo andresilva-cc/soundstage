@@ -1,0 +1,113 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`AC9 — snapshot test > compound fixture (seq + crossfade + segment + musicbed + silence) produces exact IR snapshot 1`] = `
+{
+  "channels": 1,
+  "chapters": [
+    {
+      "endSample": 211200,
+      "startSample": 0,
+      "title": "Intro",
+    },
+  ],
+  "clips": [
+    {
+      "durationSamples": 211200,
+      "gainDb": 0,
+      "id": "c0",
+      "sourceRef": {
+        "hash": "deadbeef01",
+        "kind": "cache",
+        "path": ".soundstage/cache/deadbeef01.wav",
+        "voiceUnitId": 0,
+      },
+      "startSample": 0,
+      "trackId": "voice",
+    },
+    {
+      "crossfadeIntoNext": {
+        "curve": "tri",
+        "durationSamples": 24000,
+      },
+      "durationSamples": 96000,
+      "gainDb": 0,
+      "id": "c1",
+      "sourceRef": {
+        "hash": "deadbeef02",
+        "kind": "cache",
+        "path": ".soundstage/cache/deadbeef02.wav",
+        "voiceUnitId": 1,
+      },
+      "startSample": 211200,
+      "trackId": "voice",
+    },
+    {
+      "durationSamples": 72000,
+      "gainDb": 0,
+      "id": "c2",
+      "sourceRef": {
+        "hash": "deadbeef03",
+        "kind": "cache",
+        "path": ".soundstage/cache/deadbeef03.wav",
+        "voiceUnitId": 2,
+      },
+      "startSample": 283200,
+      "trackId": "voice",
+    },
+    {
+      "durationSamples": 48000,
+      "gainDb": 0,
+      "id": "c3",
+      "sourceRef": {
+        "kind": "silence",
+      },
+      "startSample": 355200,
+      "trackId": "voice",
+    },
+    {
+      "durationSamples": 48000,
+      "gainDb": 0,
+      "id": "c4",
+      "sourceRef": {
+        "kind": "file",
+        "path": "/abs/bed.mp3",
+      },
+      "startSample": 355200,
+      "trackId": "bed-0",
+    },
+  ],
+  "ducking": [
+    {
+      "bedTrackId": "bed-0",
+      "duckUnderTrackId": "voice",
+      "preset": "speech-v1",
+      "reductionDb": -12,
+    },
+  ],
+  "episode": {
+    "author": "André",
+    "title": "Grafex weekly #12",
+  },
+  "loudness": {
+    "targetI": -16,
+    "targetLRA": 11,
+    "targetTP": -1.5,
+  },
+  "render": {
+    "outputs": [
+      "wav",
+      "mp3",
+    ],
+  },
+  "sampleRate": 48000,
+  "schemaVersion": 2,
+  "tracks": [
+    {
+      "trackId": "voice",
+    },
+    {
+      "trackId": "bed-0",
+    },
+  ],
+}
+`;

@@ -11,6 +11,7 @@ import { access, readFile, writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { deriveKey } from "./key.js";
 import { normalizeText } from "./canonical.js";
+import { runFfprobe } from "../../probe/ffprobe.js";
 import type { TtsAdapter, SynthRequest } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -31,6 +32,8 @@ export interface CacheResult {
   wavPath: string;
   durationSamples: number;
   sampleRate: number;
+  /** Content hash (hex SHA-256) — same value as the WAV filename stem. */
+  hash: string;
 }
 
 export interface CacheOptions {
@@ -103,59 +106,29 @@ function buildF32leWav(pcm: Float32Array, sampleRate: number): Buffer {
   return buf;
 }
 
-interface FfprobeStream {
-  nb_samples?: number;
-  sample_rate?: string;
-  duration_ts?: number;
-}
-
-interface FfprobeOutput {
-  streams: FfprobeStream[];
-}
-
 /**
  * Run ffprobe on a WAV file and return the stream's sample count + sample rate.
+ * Uses the shared runFfprobe helper (prefers nb_samples for WAV, falls back to duration×rate).
  */
 async function probeDuration(
   wavPath: string
 ): Promise<{ durationSamples: number; sampleRate: number; ffprobeVersion: string }> {
   const ffprobeVersion = await getFfprobeVersion();
 
-  // Probe the file for stream info including nb_samples
-  const { stdout } = await execFileAsync(
-    "ffprobe",
-    [
-      "-v", "error",
-      "-select_streams", "a:0",
-      "-show_entries", "stream=nb_samples,sample_rate,duration_ts",
-      "-of", "json",
-      wavPath,
-    ],
-    { encoding: "utf8" }
+  const { nbSamples, sampleRate, durationSec } = await runFfprobe(
+    wavPath,
+    "stream=nb_samples,sample_rate,duration_ts,duration",
   );
 
-  const probe = JSON.parse(stdout) as FfprobeOutput;
-  const stream = probe.streams[0];
-
-  if (!stream) {
-    throw new Error(`ffprobe: no audio stream found in ${wavPath}`);
+  // Prefer nb_samples (exact integer count, present in WAV)
+  if (nbSamples !== undefined) {
+    return { durationSamples: nbSamples, sampleRate, ffprobeVersion };
   }
 
-  const sampleRate = parseInt(stream.sample_rate ?? "0", 10);
-
-  // nb_samples is the most accurate — direct sample count from the container
-  if (stream.nb_samples !== undefined) {
+  // Fallback: duration (seconds) × sample_rate
+  if (durationSec !== undefined && sampleRate > 0) {
     return {
-      durationSamples: stream.nb_samples,
-      sampleRate,
-      ffprobeVersion,
-    };
-  }
-
-  // Fallback: use duration_ts (in stream timebase units = samples for WAV)
-  if (stream.duration_ts !== undefined) {
-    return {
-      durationSamples: stream.duration_ts,
+      durationSamples: Math.round(durationSec * sampleRate),
       sampleRate,
       ffprobeVersion,
     };
@@ -172,8 +145,12 @@ async function readSidecar(jsonPath: string): Promise<DurationSidecar | null> {
   try {
     const raw = await readFile(jsonPath, "utf8");
     const parsed = JSON.parse(raw) as DurationSidecar;
-    // Basic sanity check — durationSamples must be a positive integer
-    if (typeof parsed.durationSamples !== "number" || parsed.durationSamples <= 0) {
+    // Guard: durationSamples must be a positive integer (NaN, float, <=0 → miss)
+    if (!Number.isInteger(parsed.durationSamples) || parsed.durationSamples <= 0) {
+      return null;
+    }
+    // Guard: sampleRate must be a positive integer
+    if (!Number.isInteger(parsed.sampleRate) || parsed.sampleRate <= 0) {
       return null;
     }
     return parsed;
@@ -191,15 +168,19 @@ export class CacheLayer {
   private readonly cacheDir: string;
   private readonly noCache: boolean;
 
+  /** The underlying adapter's stable provider id (e.g. "kokoro", "synthetic"). */
+  readonly adapterId: string;
+
   constructor(adapter: TtsAdapter, cacheDir: string, options: CacheOptions = {}) {
     this.adapter = adapter;
     this.cacheDir = cacheDir;
     this.noCache = options.noCache ?? false;
+    this.adapterId = adapter.id;
   }
 
   /**
    * Get cached audio for the request, synthesizing if necessary.
-   * Returns the WAV path and sidecar duration (never a re-probe on hit).
+   * Returns the WAV path, sidecar duration, and hash (never a re-probe on hit).
    */
   async get(req: SynthRequest): Promise<CacheResult> {
     // Build a single normalized request — same object used for BOTH key derivation
@@ -226,6 +207,7 @@ export class CacheLayer {
           wavPath,
           durationSamples: sidecar.durationSamples,
           sampleRate: sidecar.sampleRate,
+          hash,
         };
       }
       // Sidecar missing or corrupt: fall through to miss path
@@ -257,6 +239,6 @@ export class CacheLayer {
     // Atomic rename: .tmp → .wav
     await rename(tmpPath, wavPath);
 
-    return { wavPath, durationSamples, sampleRate };
+    return { wavPath, durationSamples, sampleRate, hash };
   }
 }

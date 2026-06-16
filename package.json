@@ -2,10 +2,31 @@
   "name": "soundstage",
   "version": "0.1.0",
   "description": "Audio as Code — compose narrated audio episodes with JSX/TSX",
+  "keywords": [
+    "audio",
+    "audio-as-code",
+    "tts",
+    "text-to-speech",
+    "jsx",
+    "tsx",
+    "podcast",
+    "voiceover",
+    "ffmpeg",
+    "kokoro"
+  ],
+  "homepage": "https://github.com/andresilva-cc/soundstage#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andresilva-cc/soundstage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/andresilva-cc/soundstage/issues"
+  },
+  "author": "André Silva (https://github.com/andresilva-cc)",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "soundstage": "./dist/cli/index.js"
+    "soundstage": "dist/cli/index.js"
   },
   "exports": {
     ".": {

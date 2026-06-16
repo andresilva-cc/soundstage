@@ -66,12 +66,16 @@ export function writeChapterTags(
 ): void {
   const artworkTags = buildArtworkTags(episode);
 
+  const episodeTextTags: Tags = {
+    title: episode.title,
+    ...(episode.author !== undefined ? { artist: episode.author } : {}),
+  };
+
   if (chapters.length === 0) {
-    // No chapters — write artwork only if present, then return.
-    if (!episode.artwork) return;
-    const result = NodeID3.write(artworkTags, mp3Path);
+    // No chapters — always write episode text frames (title is required); artwork is optional.
+    const result = NodeID3.write({ ...episodeTextTags, ...artworkTags }, mp3Path);
     if (result !== true) {
-      throw new Error(`node-id3: failed to write artwork tags to ${mp3Path}: ${String(result)}`);
+      throw new Error(`node-id3: failed to write tags to ${mp3Path}: ${String(result)}`);
     }
     return;
   }
@@ -102,6 +106,7 @@ export function writeChapterTags(
   ];
 
   const tags: Tags = {
+    ...episodeTextTags,
     chapter: chapterTags,
     tableOfContents,
     ...artworkTags,

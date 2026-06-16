@@ -55,6 +55,7 @@ function buildIR(
   wavB: string,
   durB: number,
   artwork?: string,
+  author?: string,
 ): IR {
   const chapters: ChapterIR[] = [
     { title: "Intro", startSample: 0, endSample: durA },
@@ -64,7 +65,11 @@ function buildIR(
     schemaVersion: 2,
     sampleRate: SR,
     channels: 1,
-    episode: { title: "Chapter Golden Test", ...(artwork ? { artwork } : {}) },
+    episode: {
+      title: "Chapter Golden Test",
+      ...(author !== undefined ? { author } : {}),
+      ...(artwork ? { artwork } : {}),
+    },
     tracks: [{ trackId: "voice" }],
     clips: [
       {
@@ -134,7 +139,7 @@ describe("chapters golden: CHAP + CTOC round-trip", () => {
     const outDir = join(tmpDir, "chap-ctoc");
     await mkdir(outDir, { recursive: true });
 
-    const ir = buildIR(wavA, durA, wavB, durB);
+    const ir = buildIR(wavA, durA, wavB, durB, undefined, "Golden Author");
     const { mp3Path, masterWavPath } = await buildMp3(ir, outDir);
 
     // runChapterPostPass ffprobes the master WAV for the real total sample count —
@@ -183,6 +188,25 @@ describe("chapters golden: CHAP + CTOC round-trip", () => {
     expect(toc.elements, "CTOC elements must list both chapters").toHaveLength(2);
     expect(toc.elements![0]).toBe(ch0.elementID);
     expect(toc.elements![1]).toBe(ch1.elementID);
+
+    // Episode-level text frames: TIT2 + TPE1
+    expect(tags.title, "TIT2 must equal ir.episode.title").toBe("Chapter Golden Test");
+    expect(tags.artist, "TPE1 must equal ir.episode.author").toBe("Golden Author");
+  }, 120_000);
+
+  it("no TPE1 frame and no crash when episode.author is absent", async () => {
+    const outDir = join(tmpDir, "chap-ctoc-no-author");
+    await mkdir(outDir, { recursive: true });
+
+    const ir = buildIR(wavA, durA, wavB, durB); // no author
+    const { mp3Path, masterWavPath } = await buildMp3(ir, outDir);
+
+    await expect(runChapterPostPass(ir, mp3Path, masterWavPath)).resolves.not.toThrow();
+
+    const tags = NodeID3.read(mp3Path);
+    expect(tags.title).toBe("Chapter Golden Test");
+    expect(tags.artist).toBeUndefined();
+    expect(tags.chapter).toHaveLength(2);
   }, 120_000);
 });
 

@@ -22,6 +22,7 @@
   ],
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
+    "postbuild": "chmod +x dist/cli/index.js",
     "typecheck": "tsc --noEmit && tsc --project tsconfig.test.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

@@ -1,8 +1,10 @@
 // ffmpeg compiler — pure function IR → { filterScript, argv, inputs }.
-// §5.3, §5.4 (T8a scope): voice lane only.
+// §5.3, §5.4: voice lane (T8a) + bed/ducking topology (T8b).
 // When ducking[] is empty, [voicelane] IS the master mix routed to output.
 
 import type { IR, ClipIR } from "../ir/phase-b.js";
+import { validateIR } from "../ir/validate.js";
+import { buildDuckingTopology } from "./ducking.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -78,6 +80,9 @@ function assertFiniteNumber(value: unknown, label: string): number {
  * @param outPath path for the intermediate f32le WAV output
  */
 export function compileIR(ir: IR, outPath: string): CompileResult {
+  // Validate IR constraints before synthesis (throws SoundstageError on violation).
+  validateIR(ir);
+
   // Validate IR fields that will be interpolated into filter syntax (Fix #5).
   const masterRate = assertFiniteNumber(ir.sampleRate, "ir.sampleRate");
   const condition = makeCondition(masterRate);
@@ -161,9 +166,27 @@ export function compileIR(ir: IR, outPath: string): CompileResult {
       }
     }
 
-    // Route to output
-    // T8b will extend this with bed topology; for T8a voicelane = master mix
+    // Tag the final voice lane for downstream use (T8b or direct output)
     lines.push(`${lane} anull [voicelane]`);
+  }
+
+  // ---- Bed + ducking topology (T8b) ----
+  // When ducking[] is non-empty, thread the bed through sidechaincompress and
+  // amix to produce [master]; otherwise [voicelane] is the master directly.
+  let outputLabel: string;
+
+  if (ir.ducking.length > 0) {
+    outputLabel = buildDuckingTopology("[voicelane]", ir.ducking, ir, {
+      lines,
+      inputs,
+      getInputIndex,
+      label,
+      masterRate,
+      condition,
+      assertFinite: assertFiniteNumber,
+    });
+  } else {
+    outputLabel = "[voicelane]";
   }
 
   // ---- Assemble filter script ----
@@ -176,7 +199,7 @@ export function compileIR(ir: IR, outPath: string): CompileResult {
   }
 
   const outputOpts = [
-    "-map", "[voicelane]",
+    "-map", outputLabel,
     "-c:a", "pcm_f32le",
     "-ar", String(masterRate),
     "-ac", "1",

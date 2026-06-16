@@ -1,0 +1,15 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`filter-script snapshot: bed episode > bed+voice IR produces a stable filter-script snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=96000, asetpts=PTS-STARTPTS [c1];
+[c1] anull [voicelane];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b2];
+[b2] apad [b3];
+[b3] atrim=start_sample=0:end_sample=96000, asetpts=PTS-STARTPTS [b4];
+[voicelane] asplit=2 [vc5][vc6];
+[b4][vc6] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd7];
+[vc5] volume=0dB [vg8];
+[bd7] volume=-12dB [bg9];
+[vg8][bg9] amix=inputs=2:normalize=0:dropout_transition=0 [m10];"
+`;

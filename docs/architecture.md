@@ -388,7 +388,7 @@ For a sequence of voice/clip nodes on the `voice` lane with one ducking bed:
 # ---- bed: fade + loop/trim to span, then duck under the voice lane ----
 [bed_raw] aloop=…, atrim=…, afade=in:…, afade=out:… [bed];
 [voicelane] asplit=2 [vc_mix][vc_key];           # one copy mixes, one copy keys the compressor
-[bed][vc_key] sidechaincompress=threshold=…:ratio=…:attack=…:release=…:makeup=0 [bed_ducked];
+[bed][vc_key] sidechaincompress=threshold=…:ratio=…:attack=…:release=…:makeup=1 [bed_ducked];
 
 # ---- mix with EXPLICIT pre-gains, no auto-normalize ----
 [vc_mix]    volume=0dB [vc_g];

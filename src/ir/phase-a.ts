@@ -33,6 +33,8 @@ export type SourceRef = SourceRefCache | SourceRefFile;
 export interface PhaseAOptions {
   cache: CacheLayer;
   baseDir: string;
+  /** Called after each Voice node is synthesized (or served from cache). */
+  onVoiceSynthesized?: (voiceUnitId: number, hit: boolean) => void;
 }
 
 /**
@@ -77,6 +79,7 @@ async function resolveNode(
 
     const result: CacheResult = await options.cache.get(req);
     const voiceUnitId = voiceCounter.value++;
+    options.onVoiceSynthesized?.(voiceUnitId, result.hit);
 
     const sourceRef: SourceRefCache = {
       kind: "cache",

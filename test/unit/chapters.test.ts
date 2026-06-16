@@ -114,3 +114,58 @@ describe("writeChapterTags: write() does not accumulate frames on re-render", ()
     expect(tags.chapter, "chapters must not accumulate across re-renders").toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// writeChapterTags: episode-level ID3 text frames (TIT2/TPE1)
+// ---------------------------------------------------------------------------
+
+describe("writeChapterTags: episode text frames (title + artist)", () => {
+  it("writes TIT2 (title) and TPE1 (artist) when both episode.title and episode.author are set", async () => {
+    const mp3 = join(tmpDir, "text-frames-full.mp3");
+    await makeMinimalMp3(mp3);
+
+    const chapters: ChapterIR[] = [
+      { title: "Intro", startSample: 0, endSample: 96000 },
+    ];
+    const episode: EpisodeIR = { title: "Grafex Weekly #12", author: "Grafex" };
+
+    writeChapterTags(mp3, chapters, SR, 96000, episode);
+
+    const tags = NodeID3.read(mp3);
+    expect(tags.title, "TIT2 must equal episode.title").toBe("Grafex Weekly #12");
+    expect(tags.artist, "TPE1 must equal episode.author").toBe("Grafex");
+  });
+
+  it("writes TIT2 but no TPE1 when episode.author is absent", async () => {
+    const mp3 = join(tmpDir, "text-frames-no-author.mp3");
+    await makeMinimalMp3(mp3);
+
+    const chapters: ChapterIR[] = [
+      { title: "Intro", startSample: 0, endSample: 96000 },
+    ];
+    const episode: EpisodeIR = { title: "Untitled Episode" };
+
+    writeChapterTags(mp3, chapters, SR, 96000, episode);
+
+    const tags = NodeID3.read(mp3);
+    expect(tags.title).toBe("Untitled Episode");
+    // No author → no artist frame
+    expect(tags.artist).toBeUndefined();
+  });
+
+  it("text frames survive re-render (no accumulation)", async () => {
+    const mp3 = join(tmpDir, "text-frames-rerender.mp3");
+    await makeMinimalMp3(mp3);
+
+    const chapters: ChapterIR[] = [{ title: "Intro", startSample: 0, endSample: 96000 }];
+    const episode: EpisodeIR = { title: "My Show", author: "Me" };
+
+    writeChapterTags(mp3, chapters, SR, 96000, episode);
+    writeChapterTags(mp3, chapters, SR, 96000, episode);
+
+    const tags = NodeID3.read(mp3);
+    expect(tags.title).toBe("My Show");
+    expect(tags.artist).toBe("Me");
+    expect(tags.chapter).toHaveLength(1);
+  });
+});

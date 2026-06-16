@@ -141,6 +141,41 @@ describe("buildCacheReport", () => {
     expect(report.totalCached).toBe(0);
     expect(report.totalReSynth).toBe(0);
   });
+
+  it("overlapping chapter spans (crossfade case): latest-start-wins attribution", () => {
+    // Crossfades cause the following segment's startSample to be earlier than the
+    // preceding segment's endSample — chapters overlap. The voice clip at the
+    // boundary (startSample in the overlap zone) must be attributed to the
+    // LATEST-STARTING chapter (i.e. the segment it structurally belongs to).
+    //
+    // Layout:
+    //   Chapter "Intro":  [0, 100000) — voice at sample 0
+    //   Chapter "Main":   [76000, 184000) — voice at sample 76000 (overlap zone: 76000–100000)
+    //   Overlap zone: 76000–100000 → voice at 76000 is in BOTH chapters
+    //   latest-start-wins: Main.startSample(76000) > Intro.startSample(0) → Main wins
+    const ir = makeIR(
+      [
+        { title: "Intro", startSample: 0, endSample: 100000 },
+        { title: "Main", startSample: 76000, endSample: 184000 },
+      ],
+      [
+        { voiceUnitId: 0, startSample: 0 },    // clearly in Intro only
+        { voiceUnitId: 1, startSample: 76000 }, // overlap zone → should go to Main
+        { voiceUnitId: 2, startSample: 124000 }, // clearly in Main only
+      ],
+    );
+    const hitSet = new Set([0, 1, 2]);
+
+    const report = buildCacheReport(ir, hitSet, 3);
+
+    expect(report.segments).toHaveLength(2);
+    // voice 0 → Intro (only Intro contains sample 0)
+    expect(report.segments[0]).toEqual({ title: "Intro", cached: 1, reSynth: 0 });
+    // voices 1 and 2 → Main (latest-start-wins for voice 1 in overlap zone)
+    expect(report.segments[1]).toEqual({ title: "Main", cached: 2, reSynth: 0 });
+    expect(report.totalCached).toBe(3);
+    expect(report.totalReSynth).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

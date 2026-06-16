@@ -104,14 +104,26 @@ export function buildCacheReport(
 /**
  * Find the chapter index that contains the given sample position.
  * Returns -1 if no chapter matches.
- * Clamps to the last chapter for samples at or just past the final chapter's endSample.
+ *
+ * When crossfades between segments cause chapter spans to overlap, a voice clip's
+ * startSample may fall inside multiple chapters. In that case we assign the voice
+ * to the LATEST-STARTING chapter whose startSample is ≤ the voice's sample — this
+ * correctly attributes overlapping-crossfade voices to their structural segment.
  */
 function findChapterIndex(chapters: readonly ChapterIR[], sample: number): number {
+  let bestIdx = -1;
+  let bestStart = -1;
   for (let i = 0; i < chapters.length; i++) {
     const ch = chapters[i]!;
     if (sample >= ch.startSample && sample < ch.endSample) {
-      return i;
+      if (ch.startSample > bestStart) {
+        bestStart = ch.startSample;
+        bestIdx = i;
+      }
     }
+  }
+  if (bestIdx !== -1) {
+    return bestIdx;
   }
   // Clamp to last chapter for samples at/past the final chapter end.
   if (chapters.length > 0 && sample >= chapters[chapters.length - 1]!.startSample) {

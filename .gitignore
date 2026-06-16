@@ -1,2 +1,27 @@
 # Local Claude Code config
 .claude/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Soundstage cache
+.soundstage/
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Test coverage
+coverage/
+
+# Temp files
+*.tmp
+
+# Secrets
+.env*

@@ -23,8 +23,9 @@ async function getOrLoadTts(): Promise<KokoroTTS> {
     mod = (await import("kokoro-js")) as typeof mod;
   } catch {
     throw new Error(
-      "kokoro-js is not installed. Install it with: npm install kokoro-js\n" +
-      "It is the optional local-voice path — add it as a project dependency to use Kokoro TTS."
+      "kokoro-js is not installed — it provides the default (real) voice.\n" +
+      "  → Install it for real voices:    npm install kokoro-js\n" +
+      "  → Or preview without a download: re-run with --draft  (synthetic voice)"
     );
   }
 

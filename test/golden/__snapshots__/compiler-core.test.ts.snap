@@ -1,0 +1,12 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`filter-script snapshot > 2-clip IR produces a stable filter-script snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c3];
+[c3] atrim=start_sample=0:end_sample=96000, asetpts=PTS-STARTPTS [c4];
+[c4] adelay=delays=48000S:all=1 [c5];
+[c5] asetpts=PTS-STARTPTS [c6];
+[c1][c6] amix=inputs=2:normalize=0:dropout_transition=0 [c2];
+[c2] anull [voicelane];"
+`;

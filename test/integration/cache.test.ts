@@ -160,6 +160,45 @@ describe("CacheLayer — atomicity", () => {
   });
 });
 
+describe("CacheLayer — sidecar NaN / non-integer guard", () => {
+  it("sidecar with durationSamples: NaN is treated as a miss (re-synths)", async () => {
+    const synthSpy = vi.spyOn(adapter, "synth");
+
+    // Prime the cache
+    await cache.get(baseReq());
+    expect(synthSpy).toHaveBeenCalledOnce();
+
+    // Overwrite sidecar with NaN durationSamples
+    const { deriveKey } = await import("../../src/adapters/cache/key.js");
+    const hash = deriveKey(baseReq(), adapter);
+    const jsonPath = join(tmpDir, `${hash}.json`);
+    await writeFile(jsonPath, JSON.stringify({ durationSamples: NaN, sampleRate: 24000 }), "utf8");
+
+    synthSpy.mockClear();
+    const result = await cache.get(baseReq());
+    expect(synthSpy).toHaveBeenCalledOnce();
+    expect(Number.isInteger(result.durationSamples)).toBe(true);
+    expect(result.durationSamples).toBeGreaterThan(0);
+  });
+
+  it("sidecar with durationSamples: 1.5 (non-integer) is treated as a miss", async () => {
+    const synthSpy = vi.spyOn(adapter, "synth");
+
+    await cache.get(baseReq());
+    expect(synthSpy).toHaveBeenCalledOnce();
+
+    const { deriveKey } = await import("../../src/adapters/cache/key.js");
+    const hash = deriveKey(baseReq(), adapter);
+    const jsonPath = join(tmpDir, `${hash}.json`);
+    await writeFile(jsonPath, JSON.stringify({ durationSamples: 1.5, sampleRate: 24000 }), "utf8");
+
+    synthSpy.mockClear();
+    const result = await cache.get(baseReq());
+    expect(synthSpy).toHaveBeenCalledOnce();
+    expect(result.durationSamples).toBeGreaterThan(0);
+  });
+});
+
 describe("CacheLayer — corrupt/missing sidecar", () => {
   it("missing sidecar after wav exists: treats as miss (re-synths)", async () => {
     const synthSpy = vi.spyOn(adapter, "synth");

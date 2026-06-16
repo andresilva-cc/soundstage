@@ -4,6 +4,7 @@ import type { SoundstageElement } from "../jsx-runtime/index.js";
 import { COMPONENT_NAMES } from "../components/types.js";
 import { SoundstageError, formatPath } from "./errors.js";
 import { resolveInheritance } from "./inherit.js";
+import type { IR } from "./phase-b.js";
 
 const MAX_DEPTH = 100;
 
@@ -130,6 +131,25 @@ function isAudioSibling(child: unknown): boolean {
   const el = child as SoundstageElement;
   const t = el.type;
   return typeof t === "string" && (AUDIO_SIBLING_TYPES as Set<string>).has(t);
+}
+
+/**
+ * Validate a compiled IR for constraints the compiler cannot recover from.
+ * Throws SoundstageError on violation so the error reaches the user before
+ * any ffmpeg invocation.
+ *
+ * Currently checked:
+ *   - E_MULTI_BED_UNSUPPORTED: more than one ducking entry (v0.1 limitation).
+ */
+export function validateIR(ir: IR): void {
+  if (ir.ducking.length > 1) {
+    const trackIds = ir.ducking.map(d => d.bedTrackId).join(", ");
+    throw new SoundstageError(
+      "E_MULTI_BED_UNSUPPORTED",
+      `v0.1 supports exactly 1 MusicBed (ducking entry) per episode, got ${ir.ducking.length} (trackIds: ${trackIds})`,
+      "ir.ducking",
+    );
+  }
 }
 
 /**

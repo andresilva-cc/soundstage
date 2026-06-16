@@ -1,0 +1,50 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`AC1: single voice clip > emits aresample+aformat conditioning and atrim/asetpts — snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[c1] anull [voicelane];"
+`;
+
+exports[`AC2: two sequential clips > emits adelay=NS:all=1 for the second clip — snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=24000, asetpts=PTS-STARTPTS [c1];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c3];
+[c3] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c4];
+[c4] adelay=delays=24000S:all=1 [c5];
+[c5] asetpts=PTS-STARTPTS [c6];
+[c1][c6] amix=inputs=2:normalize=0:dropout_transition=0 [c2];
+[c2] anull [voicelane];"
+`;
+
+exports[`AC3: crossfade between two clips > emits acrossfade=ns=N:c1=tri:c2=tri — snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c3];
+[c3] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c4];
+[c1][c4] acrossfade=ns=36000:c1=tri:c2=tri [c2];
+[c2] anull [voicelane];"
+`;
+
+exports[`AC4: three clips with two crossfades fold left-to-right > emits two acrossfade invocations — snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c3];
+[c3] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c4];
+[c1][c4] acrossfade=ns=24000:c1=tri:c2=tri [c2];
+[2:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c6];
+[c6] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c7];
+[c2][c7] acrossfade=ns=24000:c1=tri:c2=tri [c5];
+[c5] anull [voicelane];"
+`;
+
+exports[`AC5: silence clip > emits aevalsrc=0 with atrim+asetpts for sample-exact silence — no input file — snapshot 1`] = `
+"aevalsrc=0:s=48000:d=2, atrim=end_sample=96000, asetpts=PTS-STARTPTS [sil0];
+[sil0] anull [voicelane];"
+`;
+
+exports[`AC7: no ducking entries → no amix topology > does not emit amix when ducking[] is empty — snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[c1] anull [voicelane];"
+`;

@@ -6,6 +6,7 @@
 
 import type { SoundstageElement } from "../jsx-runtime/index.js";
 import { COMPONENT_NAMES } from "../components/types.js";
+import type { EqBand } from "../components/types.js";
 import { SoundstageError } from "./errors.js";
 import { SCHEMA_VERSION } from "../schema-version.js";
 
@@ -38,6 +39,18 @@ export interface FadesIR {
   out: { durationSamples: number; curve: "tri" };
 }
 
+// ---------------------------------------------------------------------------
+// Per-clip effects (§4.1 — compile-time only; do not affect TTS cache key)
+// EqBand is defined (and exported) from components/types.ts to avoid duplication.
+// ---------------------------------------------------------------------------
+
+// Re-export EqBand from types.ts so importers of phase-b.ts have a single source.
+export type { EqBand } from "../components/types.js";
+
+export type ClipEffect =
+  | { type: "eq"; bands: EqBand[] }
+  | { type: "compress"; threshold: number; ratio: number; attack: number; release: number; knee: number };
+
 export interface ClipIR {
   id: string;
   sourceRef: SourceRefIR;
@@ -47,6 +60,8 @@ export interface ClipIR {
   gainDb: number;
   /** Stereo pan: -1.0 (full left) to 1.0 (full right). Absent = center (0.0). */
   pan?: number;
+  /** Per-clip effects applied in declaration order, after gain and pan. */
+  effects?: ClipEffect[];
   loop?: boolean;
   trim?: TrimIR;
   fades?: FadesIR;
@@ -254,6 +269,7 @@ function placeNode(
     };
     const durationSamples = el.props["durationSamples"] as number;
     const pan = el.props["pan"] as number | undefined;
+    const effects = lowerEffects(el.props);
 
     const clip: ClipIR = {
       id: `c${state.clipCounter.value++}`,
@@ -268,6 +284,7 @@ function placeNode(
       durationSamples,
       gainDb: 0.0,
       ...(pan !== undefined ? { pan } : {}),
+      ...(effects !== undefined ? { effects } : {}),
     };
     state.clips.push(clip);
     return durationSamples;
@@ -279,6 +296,7 @@ function placeNode(
     const durationSamples = el.props["durationSamples"] as number;
     const gain = (el.props["gain"] as number | undefined) ?? 0.0;
     const pan = el.props["pan"] as number | undefined;
+    const effects = lowerEffects(el.props);
 
     const clip: ClipIR = {
       id: `c${state.clipCounter.value++}`,
@@ -288,6 +306,7 @@ function placeNode(
       durationSamples,
       gainDb: gain,
       ...(pan !== undefined ? { pan } : {}),
+      ...(effects !== undefined ? { effects } : {}),
     };
     state.clips.push(clip);
     return durationSamples;
@@ -420,6 +439,40 @@ function placeNode(
   const childState = { ...state, depth: state.depth + 1 };
   const endCursor = walkSiblings(el.children, startSample, childState);
   return endCursor - startSample;
+}
+
+/**
+ * Lower eq/compress props from a resolved node into a ClipEffect[] (or undefined).
+ * Declaration order: eq first (if present), compress second (if present).
+ * Returns undefined when neither prop is set (no effects field on the ClipIR).
+ */
+function lowerEffects(props: Record<string, unknown>): ClipEffect[] | undefined {
+  const effects: ClipEffect[] = [];
+
+  const eq = props["eq"] as EqBand[] | undefined;
+  if (eq !== undefined) {
+    effects.push({ type: "eq", bands: eq });
+  }
+
+  const compress = props["compress"] as {
+    threshold: number;
+    ratio: number;
+    attack: number;
+    release: number;
+    knee: number;
+  } | undefined;
+  if (compress !== undefined) {
+    effects.push({
+      type: "compress",
+      threshold: compress.threshold,
+      ratio: compress.ratio,
+      attack: compress.attack,
+      release: compress.release,
+      knee: compress.knee,
+    });
+  }
+
+  return effects.length > 0 ? effects : undefined;
 }
 
 /** Returns the index of the last voice-lane clip in clips[], or -1 if none. */

@@ -118,6 +118,93 @@ function validateNode(
     }
   }
 
+  // Validate eq/compress props on <Voice> and <Clip>.
+  const EFFECT_PROP_TYPES: Set<string> = new Set([COMPONENT_NAMES.Voice, COMPONENT_NAMES.Clip]);
+  if (EFFECT_PROP_TYPES.has(typeName)) {
+    // eq: array of bands, each with frequency > 0, finite gain, width > 0
+    const eq = node.props["eq"];
+    if (eq !== undefined) {
+      if (!Array.isArray(eq)) {
+        throw new SoundstageError("E_INVALID_PROP", `<${typeName}> eq must be an array`, nodePath);
+      }
+      for (let bandIdx = 0; bandIdx < eq.length; bandIdx++) {
+        const band = eq[bandIdx] as { frequency?: unknown; gain?: unknown; width?: unknown };
+        if (
+          typeof band.frequency !== "number" ||
+          !Number.isFinite(band.frequency) ||
+          band.frequency <= 0
+        ) {
+          throw new SoundstageError(
+            "E_INVALID_PROP",
+            `<${typeName}> eq band[${bandIdx}] frequency must be finite and > 0, got ${JSON.stringify(band.frequency)}`,
+            nodePath,
+          );
+        }
+        if (typeof band.gain !== "number" || !Number.isFinite(band.gain)) {
+          throw new SoundstageError(
+            "E_INVALID_PROP",
+            `<${typeName}> eq band[${bandIdx}] gain must be finite, got ${JSON.stringify(band.gain)}`,
+            nodePath,
+          );
+        }
+        if (
+          typeof band.width !== "number" ||
+          !Number.isFinite(band.width) ||
+          band.width <= 0
+        ) {
+          throw new SoundstageError(
+            "E_INVALID_PROP",
+            `<${typeName}> eq band[${bandIdx}] width must be finite and > 0, got ${JSON.stringify(band.width)}`,
+            nodePath,
+          );
+        }
+      }
+    }
+
+    // compress: threshold finite; ratio ≥ 1.0; attack/release finite and > 0;
+    // knee finite and in ffmpeg's range [1, 8].
+    const compress = node.props["compress"];
+    if (compress !== undefined) {
+      const c = compress as { threshold?: unknown; ratio?: unknown; attack?: unknown; release?: unknown; knee?: unknown };
+      if (typeof c.threshold !== "number" || !Number.isFinite(c.threshold)) {
+        throw new SoundstageError(
+          "E_INVALID_PROP",
+          `<${typeName}> compress threshold must be finite, got ${JSON.stringify(c.threshold)}`,
+          nodePath,
+        );
+      }
+      if (typeof c.ratio !== "number" || !Number.isFinite(c.ratio) || c.ratio < 1.0) {
+        throw new SoundstageError(
+          "E_INVALID_PROP",
+          `<${typeName}> compress ratio must be ≥ 1.0, got ${JSON.stringify(c.ratio)}`,
+          nodePath,
+        );
+      }
+      if (typeof c.attack !== "number" || !Number.isFinite(c.attack) || c.attack <= 0) {
+        throw new SoundstageError(
+          "E_INVALID_PROP",
+          `<${typeName}> compress attack must be finite and > 0, got ${JSON.stringify(c.attack)}`,
+          nodePath,
+        );
+      }
+      if (typeof c.release !== "number" || !Number.isFinite(c.release) || c.release <= 0) {
+        throw new SoundstageError(
+          "E_INVALID_PROP",
+          `<${typeName}> compress release must be finite and > 0, got ${JSON.stringify(c.release)}`,
+          nodePath,
+        );
+      }
+      // ffmpeg acompressor knee range: [1, 8] (curve-smoothness factor, not dB).
+      if (typeof c.knee !== "number" || !Number.isFinite(c.knee) || c.knee < 1 || c.knee > 8) {
+        throw new SoundstageError(
+          "E_INVALID_PROP",
+          `<${typeName}> compress knee must be in [1, 8], got ${JSON.stringify(c.knee)}`,
+          nodePath,
+        );
+      }
+    }
+  }
+
   // Check src path existence (resolve relative paths against baseDir)
   const srcProps = SRC_PROPS[typeName];
   if (srcProps !== undefined) {

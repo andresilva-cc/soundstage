@@ -7,11 +7,12 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { access, readFile, writeFile, rename } from "node:fs/promises";
+import { access, readFile, writeFile, unlink, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { deriveKey } from "./key.js";
 import { normalizeText } from "./canonical.js";
 import { runFfprobe } from "../../probe/ffprobe.js";
+import { SoundstageError } from "../../ir/errors.js";
 import type { TtsAdapter, SynthRequest } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -41,6 +42,10 @@ export interface CacheResult {
 export interface CacheOptions {
   /** When true: bypass reading (always re-synth) but still write entries. */
   noCache?: boolean;
+  /** Milliseconds to wait between cross-process hit polls on EEXIST. Default: 100. */
+  eexistPollDelayMs?: number;
+  /** Maximum poll attempts before throwing E_CACHE_CONTENTION on EEXIST. Default: 10. */
+  eexistMaxAttempts?: number;
 }
 
 interface DurationSidecar {
@@ -169,14 +174,25 @@ export class CacheLayer {
   private readonly adapter: TtsAdapter;
   private readonly cacheDir: string;
   private readonly noCache: boolean;
+  private readonly eexistPollDelayMs: number;
+  private readonly eexistMaxAttempts: number;
 
   /** The underlying adapter's stable provider id (e.g. "kokoro", "synthetic"). */
   readonly adapterId: string;
+
+  /**
+   * Per-hash in-process promise map.
+   * When two concurrent calls miss on the same hash, the second awaiter reuses
+   * the first's Promise so synthesis runs exactly once.
+   */
+  private readonly pendingMisses = new Map<string, Promise<CacheResult>>();
 
   constructor(adapter: TtsAdapter, cacheDir: string, options: CacheOptions = {}) {
     this.adapter = adapter;
     this.cacheDir = cacheDir;
     this.noCache = options.noCache ?? false;
+    this.eexistPollDelayMs = options.eexistPollDelayMs ?? 100;
+    this.eexistMaxAttempts = options.eexistMaxAttempts ?? 10;
     this.adapterId = adapter.id;
   }
 
@@ -216,32 +232,106 @@ export class CacheLayer {
       // Sidecar missing or corrupt: fall through to miss path
     }
 
-    // Miss path: synthesize → write tmp → ffprobe → write sidecar → rename
-    const result = await this.adapter.synth(normalizedReq);
+    // Miss path — deduplicate concurrent in-process misses on the same hash.
+    const inflight = this.pendingMisses.get(hash);
+    if (inflight !== undefined) return inflight;
 
-    // Write f32le WAV to .tmp (overwrites any pre-existing .tmp)
-    const wavBuffer = buildF32leWav(result.pcm, result.sampleRate);
-    await writeFile(tmpPath, wavBuffer);
+    // Build the synthesis+write promise and register it BEFORE the first await so
+    // any concurrent caller that reaches this point sees it in the map.
+    const missPromise = (async (): Promise<CacheResult> => {
+      const result = await this.adapter.synth(normalizedReq);
 
-    // ffprobe measures the real duration from the file
-    const { durationSamples, sampleRate, ffprobeVersion } = await probeDuration(tmpPath);
+      // Build f32le WAV buffer.
+      const wavBuffer = buildF32leWav(result.pcm, result.sampleRate);
 
-    // Write sidecar JSON
-    const sidecar: DurationSidecar = {
-      durationSamples,
-      sampleRate,
-      sampleFmt: "f32le",
-      channels: 1,
-      ffprobeVersion,
-      adapterId: this.adapter.id,
-      model: this.adapter.model,
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(jsonPath, JSON.stringify(sidecar, null, 2), "utf8");
+      // Exclusive-create write (CWE-377 fix):
+      //   1. Unlink any stale .tmp (crashed prior write) — ignore ENOENT.
+      //   2. Open with flag 'wx' (fail if exists) — prevents symlink-follow attack.
+      //   3. On EEXIST: a concurrent process won the race; fall back to its sidecar.
+      await unlink(tmpPath).catch((e: NodeJS.ErrnoException) => {
+        if (e.code !== "ENOENT") throw e;
+      });
 
-    // Atomic rename: .tmp → .wav
-    await rename(tmpPath, wavPath);
+      try {
+        await writeFile(tmpPath, wavBuffer, { flag: "wx" });
+      } catch (e) {
+        const err = e as NodeJS.ErrnoException;
+        if (err.code === "EEXIST") {
+          // Concurrent process won the wx-open race.
+          // Poll the normal hit-check (wav AND sidecar) instead of reading once:
+          //  • Gap A closed: we verify the wav exists before returning its path.
+          //  • Gap B closed: if the winner hasn't finished yet we retry rather than
+          //    rethrowing a raw EEXIST or returning an unverified path.
+          return await this.awaitConcurrentEntry(wavPath, jsonPath, hash);
+        }
+        throw e;
+      }
 
-    return { wavPath, durationSamples, sampleRate, hash, hit: false };
+      // ffprobe measures the real duration from the file.
+      const { durationSamples, sampleRate, ffprobeVersion } = await probeDuration(tmpPath);
+
+      // Write sidecar JSON.
+      const sidecar: DurationSidecar = {
+        durationSamples,
+        sampleRate,
+        sampleFmt: "f32le",
+        channels: 1,
+        ffprobeVersion,
+        adapterId: this.adapter.id,
+        model: this.adapter.model,
+        createdAt: new Date().toISOString(),
+      };
+      await writeFile(jsonPath, JSON.stringify(sidecar, null, 2), "utf8");
+
+      // Atomic rename: .tmp → .wav
+      await rename(tmpPath, wavPath);
+
+      return { wavPath, durationSamples, sampleRate, hash, hit: false };
+    })();
+
+    this.pendingMisses.set(hash, missPromise);
+    try {
+      return await missPromise;
+    } finally {
+      this.pendingMisses.delete(hash);
+    }
+  }
+
+  /**
+   * Poll the normal hit-check (wav present AND sidecar valid) after losing the
+   * wx-open race to a concurrent process. Returns on the first completed hit.
+   * Throws E_CACHE_CONTENTION if eexistMaxAttempts are exhausted without a hit.
+   *
+   * Delay is applied before each attempt except the first so callers get an
+   * immediate first look at no cost.
+   */
+  private async awaitConcurrentEntry(
+    wavPath: string,
+    jsonPath: string,
+    hash: string
+  ): Promise<CacheResult> {
+    for (let attempt = 0; attempt < this.eexistMaxAttempts; attempt++) {
+      if (attempt > 0 && this.eexistPollDelayMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, this.eexistPollDelayMs));
+      }
+      const wavExists = await access(wavPath).then(() => true, () => false);
+      if (wavExists) {
+        const sidecar = await readSidecar(jsonPath);
+        if (sidecar !== null) {
+          return {
+            wavPath,
+            durationSamples: sidecar.durationSamples,
+            sampleRate: sidecar.sampleRate,
+            hash,
+            hit: true,
+          };
+        }
+      }
+    }
+    throw new SoundstageError(
+      "E_CACHE_CONTENTION",
+      `concurrent process holds cache entry ${hash.slice(0, 8)}… — retry the render`,
+      "cache"
+    );
   }
 }

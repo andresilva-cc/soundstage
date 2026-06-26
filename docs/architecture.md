@@ -253,6 +253,7 @@ interface SynthResult {
 
 - **Kokoro** (`id:"kokoro"`, default for `--final`) — lazy `import('kokoro-js')`, `dtype:"q8"`, returns 24kHz mono f32. `canonicalSettings` = `{ speed }`. Keyless, local, no API cost.
 - **OpenAI** (`id:"openai"`, `--provider openai`) — native `fetch` to `POST /v1/audio/speech`, `response_format:"pcm"`, returns raw int16 PCM at 24kHz, 1 ch, converted to f32 on receipt. Model is a constructor parameter (default `"tts-1"`; `"tts-1-hd"` also supported — model is part of the cache key, so the two produce independent entries). `canonicalSettings` = `{ speed }`. API key from `OPENAI_API_KEY` env var at synth() call time. No SDK peer dep — single REST endpoint. Retries on HTTP 429/5xx via the shared `withRetry` utility (`src/adapters/cloud/retry.ts`).
+- **ElevenLabs** (`id:"elevenlabs"`, `--provider elevenlabs`) — lazy `import('elevenlabs')` (optional peer dep). The `voice` prop value is the ElevenLabs **voice UUID** directly (e.g. `"21m00Tcm4TlvDq8ikWAM"`) — no name→ID lookup. Output format: `pcm_24000` (int16 at 24kHz, 1 ch), converted to f32 on receipt. Model is a constructor parameter (e.g. `"eleven_multilingual_v2"`; CLI default). `canonicalSettings` = `{ stability, similarity_boost, style, use_speaker_boost }` — all four settings resolved to their defaults so `undefined` and the explicit default never produce different cache keys. API key from `ELEVENLABS_API_KEY` env var at synth() call time — never stored. Handles ElevenLabs per-request character limits (~2400 chars) internally: splits at sentence boundaries, makes N sequential API calls, concatenates the int16 PCM. This internal chunking is transparent to the cache (cache key uses the full normalized `<Voice>` text). Retries on HTTP 429/5xx via `withRetry` (`src/adapters/cloud/retry.ts`).
 - **Synthetic** (`id:"synthetic"`, test fixture) — text → deterministic tone whose frequency/duration are derived from a hash of the text (so different text → different, stable audio), returned with a real sample count. Used by CI and golden tests; **needs no model and no network**.
 
 **Adapter selection (CLI `--provider` flag):**
@@ -262,11 +263,12 @@ interface SynthResult {
 --final                       → kokoro (default, backward-compat)
 --final --provider kokoro     → kokoro (explicit)
 --final --provider openai     → OpenAI TTS (requires OPENAI_API_KEY)
---final --provider elevenlabs → ElevenLabs TTS (coming soon; requires ELEVENLABS_API_KEY)
+--final --provider elevenlabs → ElevenLabs TTS (requires ELEVENLABS_API_KEY)
 ```
 
 Error codes:
 - `E_ADAPTER_MISSING_KEY` (exit 2) — required API key env var is absent at synth() call time.
+- `E_ADAPTER_REQUEST_FAILED` (exit 2) — API call failed after all retries.
 
 **Cloud extensibility:** adding a new cloud TTS provider requires only implementing `TtsAdapter` and registering it in `selectAdapter()`. The IR, compiler, and cache are untouched. Provider quirks (char limits, sentence chunking, request-stitching) live entirely inside the adapter and must be folded into `canonicalSettings` so the cache key stays correct.
 
@@ -390,13 +392,15 @@ Note: `resampler=soxr` is intentionally omitted — soxr is not universally avai
 
 ### 5.4 Filter topology (sketch)
 
-For a sequence of voice/clip nodes on the `voice` lane with one ducking bed:
+For a sequence of voice/clip nodes on the `voice` lane with N concurrent ducking beds (N ≥ 1):
 
 ```
 # ---- condition every input (always mono; soxr omitted for portability — see §5.3) ----
 [0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [v0];
 [1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [v1];
-[2:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [bed_raw];
+[2:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [bed0_raw];
+[3:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [bed1_raw];
+# (one input per bed)
 
 # ---- place voice-lane clips: trim + position in SAMPLES ----
 [v0] atrim=start_sample=0:end_sample=211200, asetpts=PTS-STARTPTS [v0t];
@@ -411,21 +415,26 @@ For a sequence of voice/clip nodes on the `voice` lane with one ducking bed:
 # ... voice-lane assembly continues with stereo streams ...
 [v0p][v1ps] acrossfade=ns=36000:c1=tri:c2=tri [voicelane];
 
-# ---- bed: fade + loop/trim to span; stereo pan expansion in stereo mode ----
-[bed_raw] aloop=…, atrim=…, afade=in:…, afade=out:… [bed_mono];
-[bed_mono] pan=stereo|c0=L*c0|c1=R*c0 [bed];    # omitted in mono mode
+# ---- beds: fade + loop/trim to span; stereo pan expansion in stereo mode ----
+[bed0_raw] aloop=…, atrim=…, afade=in:…, afade=out:… [bed0_mono];
+[bed0_mono] pan=stereo|c0=L*c0|c1=R*c0 [bed0];  # omitted in mono mode
+[bed1_raw] apad, atrim=… [bed1_mono];
+[bed1_mono] pan=stereo|c0=L*c0|c1=R*c0 [bed1];
 
-# ---- duck: split voice → mix copy + key copy ----
-[voicelane] asplit=2 [vc_mix][vc_key_raw];
-# Stereo mode: mono-sum the key so ducking depth is pan-independent.
+# ---- duck: split voice → 1 mix copy + N key copies (one per bed) ----
+[voicelane] asplit=3 [vc_mix][vc_key_raw0][vc_key_raw1];  # asplit=N+1
+# Stereo mode: mono-sum each key so ducking depth is pan-independent.
 # Without this, a voice panned hard-left barely ducks the right bed channel.
-[vc_key_raw] pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 [vc_key]; # stereo only
-[bed][vc_key] sidechaincompress=threshold=…:ratio=…:attack=…:release=…:makeup=1 [bed_ducked];
+[vc_key_raw0] pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 [vc_key0]; # stereo only
+[vc_key_raw1] pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 [vc_key1]; # stereo only
+[bed0][vc_key0] sidechaincompress=threshold=…:ratio=…:attack=…:release=…:makeup=1 [bd0];
+[bed1][vc_key1] sidechaincompress=threshold=…:ratio=…:attack=…:release=…:makeup=1 [bd1];
 
 # ---- mix with EXPLICIT pre-gains, no auto-normalize ----
-[vc_mix]     volume=0dB [vc_g];
-[bed_ducked] volume=-12dB [bed_g];               # MusicBed.duck as the bed's resting level
-[vc_g][bed_g] amix=inputs=2:normalize=0:dropout_transition=0 [mix]
+[vc_mix] volume=0dB [vc_g];
+[bd0]    volume=-12dB [bg0];                     # MusicBed.duck for bed-0
+[bd1]    volume=-18dB [bg1];                     # MusicBed.duck for bed-1
+[vc_g][bg0][bg1] amix=inputs=3:normalize=0:dropout_transition=0 [mix]  # inputs=N+1
 ```
 
 Key decisions baked in:
@@ -433,8 +442,8 @@ Key decisions baked in:
 - **Sample-domain placement** (`atrim=…_sample`, `adelay=…S`, `acrossfade=ns=…`) — never float seconds — for sample-accurate, deterministic positioning.
 - **`acrossfade` serialization** — crossfades are pairwise; a chain of N clips with crossfades is folded left-to-right into one lane.
 - **Per-clip stereo pan** — conditioning always outputs mono; each clip is expanded to stereo by a `pan=stereo|c0=L*c0|c1=R*c0` filter after conditioning and gain. The same applies to bed clips. Default pan is 0.0 (center: L=R=0.707).
-- **Pan-independent sidechain ducking** — in stereo mode the voice key is mono-summed before `sidechaincompress` so both bed channels are ducked equally regardless of the voice pan position. Without the mono-sum, `sidechaincompress` operates per-channel: a voice panned hard-left provides near-zero signal on the right channel key and barely ducks the right bed channel.
-- **Ducking via `asplit` → `sidechaincompress` → `amix normalize=0`** — the voice lane is split: one copy is mixed, one copy keys the compressor on the bed. `amix normalize=0` with **explicit per-input `volume`** pre-gains prevents ffmpeg's auto-normalization from silently changing levels (a documented footgun).
+- **Pan-independent sidechain ducking** — in stereo mode each voice key copy is mono-summed before `sidechaincompress` so both bed channels are ducked equally regardless of the voice pan position. Without the mono-sum, `sidechaincompress` operates per-channel: a voice panned hard-left provides near-zero signal on the right channel key and barely ducks the right bed channel.
+- **N-bed ducking via `asplit=N+1` → N × `sidechaincompress` → `amix=inputs=N+1 normalize=0`** — the voice lane is split into N+1 copies: one for the final mix, one key per bed. Each bed gets its own independent `sidechaincompress` instance. `amix normalize=0` with **explicit per-input `volume`** pre-gains prevents ffmpeg's auto-normalization from silently changing levels (a documented footgun).
 - **`sidechaincompress` preset** — attack/release/threshold/ratio are a *pinned preset* (`speech-v1`, ~250–500ms release), recorded in the IR's `ducking[].preset`. (Tuning the preset by ear is a build task, not an architecture decision; the architecture only fixes *that it is a named, pinned, IR-recorded preset*.)
 - **`-filter_complex_script <file>`** — the graph is written to a file and passed by path, not as an argv string. Long episodes blow past argv length limits and shell-quoting is a footgun; a script file sidesteps both and is also the exact artifact golden tests diff.
 

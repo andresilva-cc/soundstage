@@ -12,6 +12,11 @@ function serializeNumber(n: number): string {
   if (!Number.isFinite(n)) {
     throw new TypeError(`canonicalJSON: non-finite number not allowed: ${n}`);
   }
+  // Numbers ≥ 1e21 serialize as exponential notation (e.g. "1e+21") in both
+  // JSON.stringify and Number#toString, breaking the canonical contract.
+  if (Math.abs(n) >= 1e21) {
+    throw new TypeError(`canonicalJSON: number too large (would use exponential notation): ${n}`);
+  }
   // Treat -0 as 0
   if (Object.is(n, -0)) return "0";
 

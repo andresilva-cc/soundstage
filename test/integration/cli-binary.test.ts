@@ -296,6 +296,74 @@ describe.skipIf(!distExists)(
 );
 
 // ---------------------------------------------------------------------------
+// --player flag (hermetic subprocess test, FIX 1)
+// ---------------------------------------------------------------------------
+// This test exercises the actual Commander --player flag and the if (opts.player)
+// branch inside runRender() — the only place the full CLI path is exercised.
+// Integration tests in player.test.ts call generateWaveform/generatePlayer directly
+// and cannot substitute for this end-to-end coverage.
+
+describe.skipIf(!distExists)(
+  "CLI binary — --player generates waveform.png + episode-player.html",
+  () => {
+    let playerOutDir: string;
+    let playerResult: { stdout: string; stderr: string; code: number };
+
+    beforeAll(async () => {
+      playerOutDir = join(tmpDir, "player-out");
+      await mkdir(playerOutDir, { recursive: true });
+
+      playerResult = await runCli([
+        "render", FIXTURE, "--draft", "--player", "--out", playerOutDir,
+      ]);
+    }, 90_000);
+
+    it("exits 0", () => {
+      expect(playerResult.code).toBe(0);
+    });
+
+    it("produces waveform.png in the output directory", async () => {
+      await expect(access(join(playerOutDir, "waveform.png"))).resolves.toBeUndefined();
+    });
+
+    it("produces simple-player.html in the output directory", async () => {
+      await expect(access(join(playerOutDir, "simple-player.html"))).resolves.toBeUndefined();
+    });
+
+    it("stdout lists simple-player.html in the success message", () => {
+      expect(playerResult.stdout).toContain("simple-player.html");
+    });
+
+    it("stdout lists waveform.png in the success message", () => {
+      expect(playerResult.stdout).toContain("waveform.png");
+    });
+
+    it("stdout success line contains all four output filenames", () => {
+      const successLine = playerResult.stdout
+        .split("\n")
+        .find((l) => l.startsWith("soundstage: render complete"));
+      expect(successLine).toBeDefined();
+      expect(successLine).toContain("simple.wav");
+      expect(successLine).toContain("simple.mp3");
+      expect(successLine).toContain("simple-player.html");
+      expect(successLine).toContain("waveform.png");
+    });
+
+    it("without --player: waveform.png and player.html are NOT generated", async () => {
+      const noPlayerOutDir = join(tmpDir, "no-player-out");
+      await mkdir(noPlayerOutDir, { recursive: true });
+
+      await runCli([
+        "render", FIXTURE, "--draft", "--out", noPlayerOutDir,
+      ]);
+
+      await expect(access(join(noPlayerOutDir, "waveform.png"))).rejects.toThrow();
+      await expect(access(join(noPlayerOutDir, "simple-player.html"))).rejects.toThrow();
+    }, 90_000);
+  },
+);
+
+// ---------------------------------------------------------------------------
 // --provider flag behaviors (hermetic subprocess tests)
 // ---------------------------------------------------------------------------
 

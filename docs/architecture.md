@@ -66,7 +66,7 @@ All time/positions are in **integer samples** at the master sample rate (`sample
 
 ```jsonc
 {
-  "schemaVersion": 3,              // bumped on any IR-shape or cache-key change → invalidates cache
+  "schemaVersion": 3,              // bumped on cache-key changes or breaking IR-shape changes → invalidates cache; additive optional fields (e.g. effects) do NOT require a bump
   "sampleRate": 48000,             // master rate; all sample positions are at this rate
   "channels": 1,                   // output channel count: 1 = mono (default), 2 = stereo (<Episode channels={2}>)
   "episode": {
@@ -168,7 +168,7 @@ erDiagram
 - The cache is content-addressed: the only "index" is the filename = `{hash}.wav`. Lookup is an O(1) `fs.access`.
 - ffprobe results for `kind:"file"` sources are memoized in-process by `(absPath, mtimeNs, size)` to avoid re-probing the same file across clips.
 
-**Phase markers.** Every entity above is **Phase 1**. Future-phase additions (multiple beds layered, per-clip EQ, music-gen sources) extend this schema additively behind `schemaVersion` bumps — see §10.
+**Phase markers.** The core entities above are Phase 1. Phase 2 additions (multiple beds, per-clip EQ/compress, stereo pan) extend the schema additively — optional fields like `effects`, `pan`, `fades` do not require a `schemaVersion` bump. Bumps are reserved for changes to the cache key derivation or breaking structural changes (e.g., renaming required fields).
 
 **No soft delete.** The IR is a build artifact regenerated on every render; there is no persistent mutable state to soft-delete. The only on-disk state is the content-addressed cache, which is purely additive (entries are immutable; "deletion" is a cache prune, never a logical delete).
 
@@ -191,9 +191,9 @@ There is **no network API** in v0.1, so there is no auth, rate limiting, or vers
 |---|---|---|
 | `<Episode>` | `title` (req), `author?`, `artwork?`, `sampleRate=48000`, `channels=1` | Root. Establishes master rate/metadata/channel count. Children play **sequentially**. `channels=2` enables stereo output. |
 | `<Segment>` | `title?`, *(+ inheritable Voice defaults — see §4.3)* | Logical chapter. Its `title` becomes a chapter spanning its rendered children. Children play sequentially. |
-| `<Voice>` | `voice` (req), `provider?`, `speed?`, `pan?`, *(text children)* | **The cached unit.** Text content is synthesized by the selected adapter. One `<Voice>` = one cache entry = one TTS call. `pan` is a stereo position in `[-1.0, 1.0]` (default 0.0, center); ignored in mono mode. |
+| `<Voice>` | `voice` (req), `provider?`, `speed?`, `pan?`, `eq?`, `compress?`, *(text children)* | **The cached unit.** Text content is synthesized by the selected adapter. One `<Voice>` = one cache entry = one TTS call. `pan` positions in stereo `[-1.0, 1.0]` (default 0.0). `eq` and `compress` apply post-synthesis effects (compile-time only — do not affect the cache). |
 | `<MusicBed>` | `src` (req), `duck=-12`, `fadeIn?`, `fadeOut?`, `loop?`, `pan?` | Plays **under** its children (sidechain-ducked). Its duration is stretched/looped to cover the children's total duration. `pan` positions the bed in stereo (default center). |
-| `<Clip>` | `src` (req), `gain?`, `trim?`, `pan?` | References existing audio, mixed into the sequential lane at its position. `pan` positions the clip in stereo (default center). |
+| `<Clip>` | `src` (req), `gain?`, `trim?`, `pan?`, `eq?`, `compress?` | References existing audio, mixed into the sequential lane at its position. `pan` positions in stereo. `eq` and `compress` apply compile-time effects (same semantics as on `<Voice>`). |
 | `<Silence>` | `duration` (req, seconds) | Inserts a gap of exact duration in the sequential lane. |
 | `<Crossfade>` | `duration=0.75` (seconds) | A **separator** between two sibling clips: overlaps them by `duration` with an equal-power crossfade. Has no audio of its own. |
 
@@ -465,7 +465,28 @@ ffmpeg -bitexact -i mix.f32.wav \
 
 ffmpeg writes CHAP frames from FFMETADATA but **omits the CTOC frame for mp3** (trac #7940; even where a recent ffmpeg commit addresses it, behavior varies across pinned versions, so we do not depend on it). After encoding, a **`node-id3` post-pass** writes CHAP **and** CTOC (and embeds `artwork`) from the IR's `chapters[]` (sample positions → ms). This guarantees navigable chapters in podcast players regardless of which pinned ffmpeg is present. The post-pass is the *only* place chapters are written; ffmpeg's `-map_metadata` chapter path is not used for mp3.
 
-### 5.7 Background jobs / async
+### 5.7 Per-clip effects (EQ + compression)
+
+`<Voice>` and `<Clip>` support two compile-time effect props:
+
+- **`eq`** — array of EQ bands, each `{ frequency, gain, width }`. Applied as cascaded ffmpeg `equalizer` filters in declaration order:
+  ```
+  equalizer=f=<Hz>:width_type=o:width=<Q>:g=<dBgain>
+  ```
+  `width_type=o` means octave-width (`width` = Q in octaves). Cascading N bands produces N sequential `equalizer` filters in the filter graph.
+
+- **`compress`** — `{ threshold, ratio, attack, release, knee }`. Applied as a single `acompressor` filter with `makeup=1` (unity gain; level control uses `gainDb`):
+  ```
+  acompressor=threshold=<T>:ratio=<R>:attack=<A>:release=<R>:knee=<K>:makeup=1
+  ```
+
+**Ordering:** effects are emitted AFTER conditioning, trim, gain, and pan — in the `ClipIR.effects[]` declaration order. This ordering is load-bearing: different orders produce different audio.
+
+**Cache:** effects are compile-time only. They do NOT affect the TTS cache key. The adapter synthesizes plain speech; EQ/compression is applied by the compiler as a post-synthesis filter graph transform.
+
+**Validation:** `frequency` must be finite and > 0; `gain` must be finite; `width` must be finite and > 0; compressor `ratio` must be ≥ 1.0; `attack` and `release` must be finite and > 0. Invalid values throw `E_INVALID_PROP` at tree-validation time (before any synthesis or render).
+
+### 5.8 Background jobs / async
 
 None. Everything is a single synchronous CLI invocation. Synthesis calls are `await`ed sequentially in Phase A (parallelism across `<Voice>` nodes is a possible future optimization but is intentionally deferred — sequential keeps determinism reasoning and Kokoro's single model instance simple).
 

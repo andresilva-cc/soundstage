@@ -340,5 +340,41 @@ function buildClipLabelNoDelay(
     current = panLabel;
   }
 
+  // Per-clip effects: emitted AFTER gain and pan, in declaration order.
+  // EQ band → equalizer filter (cascaded, one per band).
+  // Compressor → acompressor filter with hardcoded makeup=1.
+  if (clip.effects !== undefined) {
+    for (const effect of clip.effects) {
+      if (effect.type === "eq") {
+        for (const band of effect.bands) {
+          assertFiniteNumber(band.frequency, `clip ${clip.id} eq band frequency`);
+          assertFiniteNumber(band.gain, `clip ${clip.id} eq band gain`);
+          assertFiniteNumber(band.width, `clip ${clip.id} eq band width`);
+          const eqLabel = label("c");
+          lines.push(
+            `${current} equalizer=f=${band.frequency}:width_type=o:width=${band.width}:g=${band.gain} ${eqLabel}`,
+          );
+          current = eqLabel;
+        }
+      } else if (effect.type === "compress") {
+        assertFiniteNumber(effect.threshold, `clip ${clip.id} compress threshold`);
+        assertFiniteNumber(effect.ratio, `clip ${clip.id} compress ratio`);
+        assertFiniteNumber(effect.attack, `clip ${clip.id} compress attack`);
+        assertFiniteNumber(effect.release, `clip ${clip.id} compress release`);
+        assertFiniteNumber(effect.knee, `clip ${clip.id} compress knee`);
+        // ffmpeg acompressor.threshold is a LINEAR amplitude ratio [0.000976563, 1.0].
+        // The API accepts threshold in dBFS (conventional); convert to linear here.
+        // Clamp to ffmpeg's range to avoid silent out-of-bounds behavior.
+        const thresholdLinear = Math.pow(10, effect.threshold / 20);
+        const thresholdClamped = Math.max(0.000976563, Math.min(1.0, thresholdLinear));
+        const compLabel = label("c");
+        lines.push(
+          `${current} acompressor=threshold=${thresholdClamped}:ratio=${effect.ratio}:attack=${effect.attack}:release=${effect.release}:knee=${effect.knee}:makeup=1 ${compLabel}`,
+        );
+        current = compLabel;
+      }
+    }
+  }
+
   return current;
 }

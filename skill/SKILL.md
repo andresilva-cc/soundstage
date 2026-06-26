@@ -118,7 +118,43 @@ export default (
 
 **Phase 2 limitation:** stereo source files (a stereo bed WAV) are downmixed to mono by the input conditioning, then re-expanded via the pan filter. Native stereo width is not preserved.
 
-### 4. Dialogue with music bed
+### 4. Per-clip EQ and compression
+
+Use `eq` and `compress` props on `<Voice>` or `<Clip>` to apply compile-time audio effects. Effects are applied after gain and pan — in declaration order — and do **not** affect the TTS cache.
+
+```tsx
+/** @jsxImportSource soundstage */
+
+export default (
+  <Episode title="Polished Narration">
+    {/* Gentle high-shelf cut at 8 kHz to reduce sibilance */}
+    <Voice
+      voice="am_adam"
+      eq={[
+        { frequency: 8000, gain: -4, width: 2 },   // 8 kHz shelf cut, 2-octave width
+        { frequency: 200,  gain: -2, width: 1 },   // low-end tighten
+      ]}
+      compress={{ threshold: -18, ratio: 3, attack: 10, release: 150, knee: 6 }}
+    >
+      Welcome to the show. Today we explore audio as code.
+    </Voice>
+
+    {/* EQ on a file clip */}
+    <Clip
+      src="./assets/intro-sting.wav"
+      eq={[{ frequency: 1000, gain: -6, width: 1 }]}
+    />
+  </Episode>
+);
+```
+
+**`eq` fields:** `frequency` (Hz, > 0), `gain` (dB, positive = boost, negative = cut), `width` (octaves, > 0 — uses `width_type=o` in ffmpeg). Multiple bands cascade in array order.
+
+**`compress` fields:** `threshold` (dBFS, converted to linear internally — e.g. `-18` = −18 dBFS), `ratio` (N:1, range [1, 20]), `attack` (ms, > 0), `release` (ms, > 0), `knee` (curve-smoothness factor in [1, 8], NOT dB — ffmpeg's native unit; default ~2.83, higher = softer knee). `makeup` is always 1 — use `gain` on the clip for level control.
+
+**Cache:** `eq` and `compress` are compile-time transforms. They do not affect the TTS synthesis cache — changing them re-renders without re-synthesizing speech.
+
+### 5. Dialogue with music bed
 
 ```tsx
 /** @jsxImportSource soundstage */
@@ -152,7 +188,7 @@ export default (
 
 ---
 
-### 4. Interactive HTML player with waveform
+### 6. Interactive HTML player with waveform
 
 Add `--player` to generate a self-contained HTML player alongside your episode files:
 
@@ -165,7 +201,7 @@ npx soundstage render episode.tsx --final --player
 
 The HTML file is fully self-contained — waveform is base64-inlined, JS/CSS are inlined, no CDN. The mp3 is referenced by relative filename so they must stay in the same directory. Chapter buttons jump to the correct position using pre-computed timestamps (`startSample / sampleRate` as a literal float).
 
-### 5. Cloud TTS provider (OpenAI)
+### 7. Cloud TTS provider (OpenAI)
 
 ```sh
 export OPENAI_API_KEY=sk-...
@@ -209,7 +245,6 @@ A typical 3-segment episode: ~$0.00 per re-render after the first run (Kokoro is
 |---|---|---|
 | `E_MISSING_PROP: voice` | `<Voice>` has no `voice` prop and none is inherited from `<Segment>`/`<Episode>` | Add `voice="af_heart"` to the `<Voice>` or inherit from parent |
 | `E_SRC_NOT_FOUND` | `<MusicBed src="...">` path doesn't exist | Use a path relative to the `.tsx` file; run from the project root |
-| `E_MULTI_BED_UNSUPPORTED` | More than one `<MusicBed>` at the same level | v0.1 supports one music bed per episode; nest content inside it |
 | `E_ADAPTER_MISSING_KEY` | Cloud TTS API key not set | `export OPENAI_API_KEY=sk-...` or `export ELEVENLABS_API_KEY=...` before rendering |
 | Mix step fails (ffmpeg error) | Missing `ffmpeg`/`ffprobe` on PATH | Install ffmpeg v8.x: `brew install ffmpeg` / `apt install ffmpeg` |
 | Kokoro model not found | First run downloads ~86 MB model | Wait for download; subsequent runs use the cached model |

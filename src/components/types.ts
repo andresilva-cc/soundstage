@@ -9,6 +9,20 @@ export interface VoiceDefaults {
 
 // §4.1 Component prop types
 
+export interface EqBand {
+  frequency: number;  // Hz, > 0
+  gain: number;       // dB, finite
+  width: number;      // Q in octaves, > 0
+}
+
+export interface CompressProps {
+  threshold: number;  // dBFS (user-facing); compiler converts to linear for ffmpeg
+  ratio: number;      // N:1, range [1, 20]
+  attack: number;     // ms, range [0.01, 2000]
+  release: number;    // ms, range [0.01, 9000]
+  knee: number;       // curve-smoothness factor, ffmpeg native range [1, 8] (default ~2.83)
+}
+
 export interface EpisodeProps extends VoiceDefaults {
   title: string;
   author?: string;
@@ -30,6 +44,10 @@ export interface VoiceProps {
   speed?: number;
   /** Stereo pan position: -1.0 (full left) to 1.0 (full right). Default 0.0 (center). */
   pan?: number;
+  /** EQ bands applied to this clip's audio, in declaration order. */
+  eq?: EqBand[];
+  /** Compression applied to this clip's audio. */
+  compress?: CompressProps;
   children?: string | string[];
 }
 
@@ -50,6 +68,10 @@ export interface ClipProps {
   trim?: { start: number; end: number };
   /** Stereo pan position: -1.0 (full left) to 1.0 (full right). Default 0.0 (center). */
   pan?: number;
+  /** EQ bands applied to this clip's audio, in declaration order. */
+  eq?: EqBand[];
+  /** Compression applied to this clip's audio. */
+  compress?: CompressProps;
 }
 
 export interface SilenceProps {

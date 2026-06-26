@@ -20,6 +20,7 @@ import { applyLoudnorm } from "../compiler/loudnorm.js";
 import { encodeMp3 } from "../compiler/encode.js";
 import { runChapterPostPass } from "../compiler/chapters.js";
 import { buildCacheReport, formatCacheReport } from "./report.js";
+import { generateWaveform, generatePlayer } from "../compiler/player.js";
 
 // ---------------------------------------------------------------------------
 // Exit codes (§4.6)
@@ -104,7 +105,8 @@ function handleError(err: unknown): never {
       err.message.startsWith("soundstage: error[E_FFMPEG]") ||
       err.message.includes("mix pass failed") ||
       err.message.startsWith("loudnorm") ||
-      err.message.startsWith("mp3 encode failed");
+      err.message.startsWith("mp3 encode failed") ||
+      err.message.startsWith("waveform generation failed");
     if (isffmpegError) {
       printError(`soundstage: error[E_FFMPEG]: ${err.message}`);
       process.exit(EXIT_FFMPEG_ERROR);
@@ -129,6 +131,7 @@ interface RenderOptions {
   draft: boolean;
   final: boolean;
   provider?: string; // --provider <kokoro|openai|elevenlabs>; only meaningful with --final
+  player?: boolean; // --player generates waveform.png + <stem>-player.html
 }
 
 async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
@@ -252,14 +255,31 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
     }
   }
 
-  // 9. Print cache report.
+  // 9. (Optional) Generate waveform.png + <stem>-player.html when --player is set.
+  let playerOutputs = "";
+  if (opts.player) {
+    let waveformPath: string;
+    try {
+      waveformPath = await generateWaveform(mp3Path, outDir);
+    } catch (err) {
+      handleError(err);
+    }
+    try {
+      await generatePlayer(ir, mp3Path, waveformPath, outDir);
+    } catch (err) {
+      handleError(err);
+    }
+    playerOutputs = `, ${stem}-player.html, waveform.png`;
+  }
+
+  // 10. Print cache report.
   const report = buildCacheReport(ir, hitVoiceUnitIds, totalVoices);
   process.stdout.write("soundstage: cache report\n");
   process.stdout.write(formatCacheReport(report) + "\n");
 
-  // 10. Success message.
+  // 11. Success message.
   process.stdout.write(
-    `soundstage: render complete → ${stem}.wav, ${stem}.mp3\n`,
+    `soundstage: render complete → ${stem}.wav, ${stem}.mp3${playerOutputs}\n`,
   );
 }
 
@@ -285,6 +305,7 @@ program
     "--provider <name>",
     "TTS provider for --final renders: kokoro (default), openai, elevenlabs",
   )
+  .option("--player", "Generate waveform.png + interactive HTML player alongside episode files")
   .action(async (file: string, opts: RenderOptions) => {
     // Validate flag combinations.
     if (opts.draft && opts.final) {

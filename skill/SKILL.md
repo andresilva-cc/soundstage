@@ -152,7 +152,20 @@ export default (
 
 ---
 
-### 4. Cloud TTS provider (OpenAI)
+### 4. Interactive HTML player with waveform
+
+Add `--player` to generate a self-contained HTML player alongside your episode files:
+
+```sh
+npx soundstage render episode.tsx --final --player
+# → episode.wav, episode.mp3 (as usual)
+# → waveform.png             (1200×120 px peak waveform, steelblue)
+# → episode-player.html      (open in browser to play with chapter buttons)
+```
+
+The HTML file is fully self-contained — waveform is base64-inlined, JS/CSS are inlined, no CDN. The mp3 is referenced by relative filename so they must stay in the same directory. Chapter buttons jump to the correct position using pre-computed timestamps (`startSample / sampleRate` as a literal float).
+
+### 5. Cloud TTS provider (OpenAI)
 
 ```sh
 export OPENAI_API_KEY=sk-...

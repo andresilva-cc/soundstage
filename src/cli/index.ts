@@ -5,7 +5,7 @@
 import { Command } from "commander";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, basename, extname, join } from "node:path";
-import { mkdtemp, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { loadTsx } from "./loader.js";
 import { phaseA } from "../ir/phase-a.js";
@@ -21,6 +21,7 @@ import { encodeMp3 } from "../compiler/encode.js";
 import { runChapterPostPass } from "../compiler/chapters.js";
 import { buildCacheReport, formatCacheReport } from "./report.js";
 import { generateWaveform, generatePlayer } from "../compiler/player.js";
+import { readRenderState, writeRenderState, hashIR } from "./render-state.js";
 
 // ---------------------------------------------------------------------------
 // Exit codes (§4.6)
@@ -131,6 +132,7 @@ interface RenderOptions {
   final: boolean;
   provider?: string; // --provider <kokoro|openai|elevenlabs>; only meaningful with --final
   player?: boolean; // --player generates waveform.png + <stem>-player.html
+  force?: boolean; // --force bypasses the IR hash check (always re-renders)
 }
 
 async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
@@ -207,6 +209,52 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
   const mp3Path = join(outDir, `${stem}.mp3`);
   ir.render.outputs = ["wav", "mp3"];
 
+  // 4.5. Streaming skip check — AFTER ffmpegVersion is set (determinism boundary).
+  // Hash includes ffmpegVersion so a binary upgrade correctly busts the skip.
+  const irHash = hashIR(ir);
+  if (!opts.force) {
+    const state = await readRenderState(outDir);
+    if (state?.ir_hash === irHash) {
+      let outputsExist = true;
+      try {
+        await access(wavPath);
+        await access(mp3Path);
+      } catch {
+        outputsExist = false;
+      }
+      if (outputsExist) {
+        // Phase A already ran — print cache report before returning so callers
+        // can see TTS hit/miss stats even on a skipped (streaming) render.
+        const skipReport = buildCacheReport(ir, chunkStats);
+        process.stdout.write("soundstage: cache report\n");
+        process.stdout.write(formatCacheReport(skipReport) + "\n");
+
+        // Player artifacts are cheap and idempotent — regenerate from the
+        // existing mp3 even on a skip so --player is never silently absent.
+        let skipPlayerOutputs = "";
+        if (opts.player) {
+          let waveformPath: string;
+          try {
+            waveformPath = await generateWaveform(mp3Path, outDir);
+          } catch (err) {
+            handleError(err);
+          }
+          try {
+            await generatePlayer(ir, mp3Path, waveformPath, outDir);
+          } catch (err) {
+            handleError(err);
+          }
+          skipPlayerOutputs = `, ${stem}-player.html, waveform.png`;
+        }
+
+        process.stdout.write(
+          `soundstage: no changes — outputs up to date${skipPlayerOutputs}\n`,
+        );
+        return;
+      }
+    }
+  }
+
   // Use a temp dir for intermediate files (mix, loudnorm pass).
   let tmpDir: string | undefined;
   try {
@@ -248,6 +296,17 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
       await runChapterPostPass(ir, mp3Path, wavPath);
     } catch (err) {
       handleError(err);
+    }
+
+    // 8.5. Write render state — records irHash so unchanged re-runs are skipped.
+    // A failed write is non-fatal: log a warning and continue. The render is
+    // already complete; a missing state file just means the next run re-renders.
+    try {
+      await writeRenderState(outDir, irHash);
+    } catch (stateErr) {
+      printError(
+        `soundstage: warning: could not write render-state.json: ${stateErr instanceof Error ? stateErr.message : String(stateErr)}`,
+      );
     }
   } finally {
     if (tmpDir !== undefined) {
@@ -306,6 +365,7 @@ program
     "TTS provider for --final renders: kokoro (default), openai, elevenlabs",
   )
   .option("--player", "Generate waveform.png + interactive HTML player alongside episode files")
+  .option("--force", "Re-render even when IR is unchanged (bypass hash check)")
   .action(async (file: string, opts: RenderOptions) => {
     // Validate flag combinations.
     if (opts.draft && opts.final) {

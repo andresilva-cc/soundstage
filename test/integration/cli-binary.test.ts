@@ -441,3 +441,45 @@ describe.skipIf(!distExists)(
     }, 90_000);
   },
 );
+
+// ---------------------------------------------------------------------------
+// Fix 3: real CLI streaming skip + --force (subprocess, hermetic)
+// Verifies the actual runRender() wiring: Commander --force flag + the
+// ffmpegVersion-before-hash ordering that the unit-level helper can't catch.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!distExists)(
+  "CLI binary — streaming skip and --force",
+  () => {
+    let streamOutDir: string;
+
+    beforeAll(async () => {
+      streamOutDir = join(tmpDir, "streaming-out");
+      await mkdir(streamOutDir, { recursive: true });
+
+      // First render: cold state — should complete normally.
+      await execFileAsync(
+        process.execPath,
+        [CLI_ENTRY, "render", FIXTURE, "--draft", "--out", streamOutDir],
+        { encoding: "utf8", timeout: 60_000 },
+      );
+    }, 90_000);
+
+    it("unchanged re-run prints skip message and exits 0", async () => {
+      const { stdout, code } = await runCli([
+        "render", FIXTURE, "--draft", "--out", streamOutDir,
+      ]);
+      expect(code).toBe(0);
+      expect(stdout).toContain("no changes");
+    }, 60_000);
+
+    it("--force re-run does NOT print skip message (full pipeline runs)", async () => {
+      const { stdout, code } = await runCli([
+        "render", FIXTURE, "--draft", "--force", "--out", streamOutDir,
+      ]);
+      expect(code).toBe(0);
+      expect(stdout).not.toContain("no changes");
+      expect(stdout).toContain("render complete");
+    }, 60_000);
+  },
+);

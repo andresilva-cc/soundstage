@@ -110,10 +110,13 @@ export function compileIR(ir: IR, outPath: string): CompileResult {
   if (voiceClips.length === 0) {
     // Degenerate: emit 1-sample silence so ffmpeg has a valid output.
     // atrim+asetpts after aevalsrc pins the output to exactly 1 sample (§3.2/§8).
+    // Stereo: exprs=0|0 provides two channel expressions (channel_layouts= is not
+    // a valid aevalsrc option in ffmpeg 8).
     const durationSamples = 1;
     const durationSec = durationSamples / masterRate;
+    const silExpr = ir.channels === 2 ? "exprs=0|0" : "0";
     lines.push(
-      `aevalsrc=0:s=${masterRate}:d=${durationSec}, ` +
+      `aevalsrc=${silExpr}:s=${masterRate}:d=${durationSec}, ` +
       `atrim=end_sample=${durationSamples}, asetpts=PTS-STARTPTS [voicelane]`,
     );
   } else {
@@ -136,7 +139,7 @@ export function compileIR(ir: IR, outPath: string): CompileResult {
     //   step2: acrossfade([AB_lane], [C_noDelay]) → ABC_lane
 
     // Build the first clip's label (always with delay if needed)
-    let lane = buildClipLabel(voiceClips[0]!, getInputIndex, label, lines, masterRate, condition);
+    let lane = buildClipLabel(voiceClips[0]!, getInputIndex, label, lines, masterRate, condition, ir.channels);
     let i = 0;
 
     while (i < voiceClips.length - 1) {
@@ -147,7 +150,7 @@ export function compileIR(ir: IR, outPath: string): CompileResult {
       if (clip.crossfadeIntoNext !== undefined) {
         // Second clip for acrossfade: condition + trim only, NO adelay.
         // (PTS starts at 0 from asetpts=PTS-STARTPTS; acrossfade concatenates sequentially.)
-        const rawNext = buildClipLabelNoDelay(nextClip, getInputIndex, label, lines, masterRate, condition);
+        const rawNext = buildClipLabelNoDelay(nextClip, getInputIndex, label, lines, masterRate, condition, ir.channels);
         const { durationSamples: ns, curve } = clip.crossfadeIntoNext;
         lines.push(`${lane}${rawNext} acrossfade=ns=${ns}:c1=${curve}:c2=${curve} ${merged}`);
         lane = merged;
@@ -157,7 +160,7 @@ export function compileIR(ir: IR, outPath: string): CompileResult {
         // the acrossfade output, not by adelay). We continue the while loop normally.
       } else {
         // Sequential: next clip is delay-placed; amix=normalize=0 sums the streams.
-        const nextPlaced = buildClipLabel(nextClip, getInputIndex, label, lines, masterRate, condition);
+        const nextPlaced = buildClipLabel(nextClip, getInputIndex, label, lines, masterRate, condition, ir.channels);
         lines.push(
           `${lane}${nextPlaced} amix=inputs=2:normalize=0:dropout_transition=0 ${merged}`,
         );
@@ -183,6 +186,7 @@ export function compileIR(ir: IR, outPath: string): CompileResult {
       label,
       masterRate,
       condition,
+      channels: ir.channels,
       assertFinite: assertFiniteNumber,
     });
   } else {
@@ -202,7 +206,7 @@ export function compileIR(ir: IR, outPath: string): CompileResult {
     "-map", outputLabel,
     "-c:a", "pcm_f32le",
     "-ar", String(masterRate),
-    "-ac", "1",
+    "-ac", String(ir.channels),
     "-y",
     "--",
     outPath,
@@ -237,8 +241,9 @@ function buildClipLabel(
   lines: string[],
   masterRate: number,
   condition: string,
+  channels: 1 | 2 = 1,
 ): string {
-  const base = buildClipLabelNoDelay(clip, getInputIndex, label, lines, masterRate, condition);
+  const base = buildClipLabelNoDelay(clip, getInputIndex, label, lines, masterRate, condition, channels);
 
   // Delay to absolute timeline position (samples, never float seconds).
   // asetpts=PTS-STARTPTS resets PTS after adelay so downstream amix sees
@@ -267,6 +272,7 @@ function buildClipLabelNoDelay(
   lines: string[],
   masterRate: number,
   condition: string,
+  channels: 1 | 2 = 1,
 ): string {
   // Validate numeric fields before interpolating into filter syntax (Fix #5).
   assertFiniteNumber(clip.durationSamples, `clip ${clip.id} durationSamples`);
@@ -276,10 +282,13 @@ function buildClipLabelNoDelay(
     // Inline aevalsrc — no file, no -i.
     // aevalsrc's `d` option takes seconds (float); atrim pins the output to
     // exactly durationSamples so there is no ±1-sample drift (§3.2/§8).
+    // Stereo: exprs=0|0 provides two channel expressions (channel_layouts= is
+    // not a valid aevalsrc option in ffmpeg 8).
     const durationSec = clip.durationSamples / masterRate;
     const outLabel = label("sil");
+    const silExpr = channels === 2 ? "exprs=0|0" : "0";
     lines.push(
-      `aevalsrc=0:s=${masterRate}:d=${durationSec}, ` +
+      `aevalsrc=${silExpr}:s=${masterRate}:d=${durationSec}, ` +
       `atrim=end_sample=${clip.durationSamples}, asetpts=PTS-STARTPTS ${outLabel}`,
     );
     return outLabel;
@@ -292,6 +301,7 @@ function buildClipLabelNoDelay(
   }
 
   // File input: condition unconditionally (§5.3)
+  // Conditioning always outputs mono; stereo expansion happens via the pan filter below.
   const idx = getInputIndex(path);
   const condLabel = label("c");
   lines.push(`[${idx}:a] ${condition} ${condLabel}`);
@@ -314,6 +324,20 @@ function buildClipLabelNoDelay(
     const gainLabel = label("c");
     lines.push(`${current} volume=${clip.gainDb}dB ${gainLabel}`);
     current = gainLabel;
+  }
+
+  // Stereo pan: applied AFTER conditioning and gain, for ALL clips when ir.channels===2.
+  // Constant-power law: theta = (1 + pan) / 2 * (π/2); L = cos(θ); R = sin(θ).
+  // Default pan is 0.0 (center) when the ClipIR has no pan field.
+  if (channels === 2) {
+    const pan = clip.pan ?? 0.0;
+    assertFiniteNumber(pan, `clip ${clip.id} pan`);
+    const theta = ((1 + pan) / 2) * (Math.PI / 2);
+    const L = Math.cos(theta).toFixed(6);
+    const R = Math.sin(theta).toFixed(6);
+    const panLabel = label("c");
+    lines.push(`${current} pan=stereo|c0=${L}*c0|c1=${R}*c0 ${panLabel}`);
+    current = panLabel;
   }
 
   return current;

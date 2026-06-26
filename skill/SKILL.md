@@ -97,7 +97,28 @@ export default (
 );
 ```
 
-### 3. Dialogue with music bed
+### 3. Stereo output with per-voice pan
+
+Add `channels={2}` to `<Episode>` to enable stereo output. Then use the `pan` prop on any `<Voice>`, `<Clip>`, or `<MusicBed>` to position it in the stereo field:
+
+```tsx
+/** @jsxImportSource soundstage */
+
+export default (
+  <Episode title="Stereo Interview" channels={2}>
+    <Voice voice="am_adam" pan={-0.3}>So tell me about your experience.</Voice>
+    <Voice voice="af_heart" pan={0.3}>It all started with a single changelog episode.</Voice>
+  </Episode>
+);
+```
+
+**Pan range:** `-1.0` = full left, `0.0` = center (default), `1.0` = full right. Uses constant-power law so perceived loudness stays even across the stereo field.
+
+**Mono is the default and unchanged.** Episodes without `channels={2}` render exactly as before — no migration required.
+
+**Phase 2 limitation:** stereo source files (a stereo bed WAV) are downmixed to mono by the input conditioning, then re-expanded via the pan filter. Native stereo width is not preserved.
+
+### 4. Dialogue with music bed
 
 ```tsx
 /** @jsxImportSource soundstage */

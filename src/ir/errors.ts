@@ -9,7 +9,8 @@ export type ErrorCode =
   | "E_MAX_DEPTH"
   | "E_MULTI_BED_UNSUPPORTED"
   | "E_ARTWORK_NOT_FOUND"
-  | "E_NO_DEFAULT_EXPORT";
+  | "E_NO_DEFAULT_EXPORT"
+  | "E_CACHE_CONTENTION"; // cache entry locked by concurrent process — retry the render
 
 export class SoundstageError extends Error {
   readonly code: ErrorCode;

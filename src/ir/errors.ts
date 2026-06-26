@@ -10,6 +10,8 @@ export type ErrorCode =
   | "E_MULTI_BED_UNSUPPORTED"
   | "E_ARTWORK_NOT_FOUND"
   | "E_NO_DEFAULT_EXPORT"
+  | "E_ADAPTER_MISSING_KEY" // thrown by cloud adapters when required API key env var is absent
+  | "E_ADAPTER_REQUEST_FAILED" // thrown by cloud adapters when the API request fails after all retries
   | "E_CACHE_CONTENTION"; // cache entry locked by concurrent process — retry the render
 
 export class SoundstageError extends Error {

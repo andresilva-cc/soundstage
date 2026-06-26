@@ -100,7 +100,7 @@ exports[`AC9 — snapshot test > compound fixture (seq + crossfade + segment + m
     ],
   },
   "sampleRate": 48000,
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "tracks": [
     {
       "trackId": "voice",

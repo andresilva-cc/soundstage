@@ -16,7 +16,7 @@ const SR = 48000;
 
 function baseIR(overrides: Partial<IR> = {}): IR {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     sampleRate: SR,
     channels: 1,
     episode: { title: "Test Episode" },

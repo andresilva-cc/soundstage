@@ -294,3 +294,82 @@ describe.skipIf(!distExists)(
     });
   },
 );
+
+// ---------------------------------------------------------------------------
+// --provider flag behaviors (hermetic subprocess tests)
+// ---------------------------------------------------------------------------
+
+/** runCli variant that accepts a custom env map (inherits process.env by default). */
+async function runCliEnv(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      [CLI_ENTRY, ...args],
+      { encoding: "utf8", timeout: 60_000, env },
+      (err, stdout, stderr) => {
+        const exitCode =
+          err !== null && typeof (err as { code?: unknown }).code === "number"
+            ? (err as { code: number }).code
+            : 0;
+        resolve({ stdout: stdout as string, stderr: stderr as string, code: exitCode });
+      },
+    );
+  });
+}
+
+describe.skipIf(!distExists)(
+  "CLI binary — --provider flag behaviors",
+  () => {
+    let providerOutDir: string;
+
+    beforeAll(async () => {
+      providerOutDir = join(tmpDir, "provider-out");
+      await mkdir(providerOutDir, { recursive: true });
+    });
+
+    it("--final --provider unknown exits 1 with clear message and no doubled prefix", async () => {
+      const { code, stderr } = await runCli([
+        "render", FIXTURE, "--final", "--provider", "unknown-xyz", "--out", providerOutDir,
+      ]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("unknown-xyz");
+      // The message must NOT contain a doubled "soundstage: error: soundstage: error:" prefix.
+      expect(stderr).not.toMatch(/soundstage: error:.*soundstage: error:/s);
+    });
+
+    it("--draft --provider openai emits warning on stderr and exits 0 with synthetic output", async () => {
+      const draftOutDir = join(tmpDir, "draft-provider-out");
+      await mkdir(draftOutDir, { recursive: true });
+
+      const { code, stderr, stdout } = await runCli([
+        "render", FIXTURE, "--draft", "--provider", "openai", "--out", draftOutDir,
+      ]);
+
+      expect(code).toBe(0);
+      expect(stderr).toContain("warning");
+      expect(stderr).toContain("--provider");
+      expect(stdout).toContain("soundstage: render complete");
+    }, 90_000);
+
+    it("--final --provider openai with no API key exits 2 (E_ADAPTER_MISSING_KEY)", async () => {
+      // Build a subprocess env without OPENAI_API_KEY so the adapter throws E_ADAPTER_MISSING_KEY.
+      // This is hermetic — the adapter checks the key before any network call.
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      delete env["OPENAI_API_KEY"];
+
+      const noKeyOutDir = join(tmpDir, "no-key-out");
+      await mkdir(noKeyOutDir, { recursive: true });
+
+      const { code, stderr } = await runCliEnv(
+        ["render", FIXTURE, "--final", "--provider", "openai", "--out", noKeyOutDir],
+        env,
+      );
+
+      expect(code).toBe(2);
+      expect(stderr).toContain("OPENAI_API_KEY");
+    }, 90_000);
+  },
+);

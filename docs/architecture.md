@@ -66,9 +66,9 @@ All time/positions are in **integer samples** at the master sample rate (`sample
 
 ```jsonc
 {
-  "schemaVersion": 2,              // bumped on any IR-shape or cache-key change → invalidates cache
+  "schemaVersion": 3,              // bumped on any IR-shape or cache-key change → invalidates cache
   "sampleRate": 48000,             // master rate; all sample positions are at this rate
-  "channels": 1,                   // v0.1 is mono end-to-end (Kokoro is mono); stereo is a later phase
+  "channels": 1,                   // output channel count: 1 = mono (default), 2 = stereo (<Episode channels={2}>)
   "episode": {
     "title": "Grafex weekly #12",
     "author": "André",             // optional
@@ -91,6 +91,7 @@ All time/positions are in **integer samples** at the master sample rate (`sample
       "startSample": 0,            // absolute position on the master timeline
       "durationSamples": 211200,   // real measured duration (post-trim)
       "gainDb": 0.0,
+      "pan": 0.0,                  // optional stereo pan [-1.0, 1.0]; default 0.0 (center); ignored in mono mode
       "trim": { "startSample": 0, "endSample": 211200 }, // optional; applied via atrim
       "fades": {                   // optional; sample-domain
         "in":  { "durationSamples": 0,    "curve": "tri" },
@@ -167,7 +168,7 @@ erDiagram
 - The cache is content-addressed: the only "index" is the filename = `{hash}.wav`. Lookup is an O(1) `fs.access`.
 - ffprobe results for `kind:"file"` sources are memoized in-process by `(absPath, mtimeNs, size)` to avoid re-probing the same file across clips.
 
-**Phase markers.** Every entity above is **Phase 1**. Future-phase additions (stereo `channels:2`, multiple beds layered, per-clip EQ, music-gen sources) extend this schema additively behind `schemaVersion` bumps — see §10.
+**Phase markers.** Every entity above is **Phase 1**. Future-phase additions (multiple beds layered, per-clip EQ, music-gen sources) extend this schema additively behind `schemaVersion` bumps — see §10.
 
 **No soft delete.** The IR is a build artifact regenerated on every render; there is no persistent mutable state to soft-delete. The only on-disk state is the content-addressed cache, which is purely additive (entries are immutable; "deletion" is a cache prune, never a logical delete).
 
@@ -188,11 +189,11 @@ There is **no network API** in v0.1, so there is no auth, rate limiting, or vers
 
 | Component | Props | Semantics |
 |---|---|---|
-| `<Episode>` | `title` (req), `author?`, `artwork?`, `sampleRate=48000` | Root. Establishes master rate/metadata. Children play **sequentially**. |
+| `<Episode>` | `title` (req), `author?`, `artwork?`, `sampleRate=48000`, `channels=1` | Root. Establishes master rate/metadata/channel count. Children play **sequentially**. `channels=2` enables stereo output. |
 | `<Segment>` | `title?`, *(+ inheritable Voice defaults — see §4.3)* | Logical chapter. Its `title` becomes a chapter spanning its rendered children. Children play sequentially. |
-| `<Voice>` | `voice` (req), `provider?`, `speed?`, *(text children)* | **The cached unit.** Text content is synthesized by the selected adapter. One `<Voice>` = one cache entry = one TTS call. |
-| `<MusicBed>` | `src` (req), `duck=-12`, `fadeIn?`, `fadeOut?`, `loop?` | Plays **under** its children (sidechain-ducked). Its duration is stretched/looped to cover the children's total duration. |
-| `<Clip>` | `src` (req), `gain?`, `trim?` | References existing audio, mixed into the sequential lane at its position. |
+| `<Voice>` | `voice` (req), `provider?`, `speed?`, `pan?`, *(text children)* | **The cached unit.** Text content is synthesized by the selected adapter. One `<Voice>` = one cache entry = one TTS call. `pan` is a stereo position in `[-1.0, 1.0]` (default 0.0, center); ignored in mono mode. |
+| `<MusicBed>` | `src` (req), `duck=-12`, `fadeIn?`, `fadeOut?`, `loop?`, `pan?` | Plays **under** its children (sidechain-ducked). Its duration is stretched/looped to cover the children's total duration. `pan` positions the bed in stereo (default center). |
+| `<Clip>` | `src` (req), `gain?`, `trim?`, `pan?` | References existing audio, mixed into the sequential lane at its position. `pan` positions the clip in stereo (default center). |
 | `<Silence>` | `duration` (req, seconds) | Inserts a gap of exact duration in the sequential lane. |
 | `<Crossfade>` | `duration=0.75` (seconds) | A **separator** between two sibling clips: overlaps them by `duration` with an equal-power crossfade. Has no audio of its own. |
 
@@ -248,12 +249,26 @@ interface SynthResult {
 }
 ```
 
-**v0.1 adapters**
+**Available adapters**
 
-- **Kokoro** (`id:"kokoro"`, default) — lazy `import('kokoro-js')`, `dtype:"q8"`, returns 24kHz mono f32. `canonicalSettings` = `{ voice, speed }`.
+- **Kokoro** (`id:"kokoro"`, default for `--final`) — lazy `import('kokoro-js')`, `dtype:"q8"`, returns 24kHz mono f32. `canonicalSettings` = `{ speed }`. Keyless, local, no API cost.
+- **OpenAI** (`id:"openai"`, `--provider openai`) — native `fetch` to `POST /v1/audio/speech`, `response_format:"pcm"`, returns raw int16 PCM at 24kHz, 1 ch, converted to f32 on receipt. Model is a constructor parameter (default `"tts-1"`; `"tts-1-hd"` also supported — model is part of the cache key, so the two produce independent entries). `canonicalSettings` = `{ speed }`. API key from `OPENAI_API_KEY` env var at synth() call time. No SDK peer dep — single REST endpoint. Retries on HTTP 429/5xx via the shared `withRetry` utility (`src/adapters/cloud/retry.ts`).
 - **Synthetic** (`id:"synthetic"`, test fixture) — text → deterministic tone whose frequency/duration are derived from a hash of the text (so different text → different, stable audio), returned with a real sample count. Used by CI and golden tests; **needs no model and no network**.
 
-**Cloud extensibility (not built in v0.1, but the seam supports it):** an OpenAI/ElevenLabs adapter is added by implementing `TtsAdapter` and registering it under a `provider` id. The IR, compiler, and cache are untouched. Provider quirks (char limits, sentence chunking, ElevenLabs request-stitching, OpenAI `instructions`) live entirely inside the adapter and must be folded into `canonicalSettings` so the cache key stays correct. The same interface generalizes to future **music-gen** adapters (a `<MusicBed generate="…">` would route to a generator adapter with the identical key/cache machinery).
+**Adapter selection (CLI `--provider` flag):**
+
+```
+--draft                       → synthetic adapter (ignores --provider; warns if set)
+--final                       → kokoro (default, backward-compat)
+--final --provider kokoro     → kokoro (explicit)
+--final --provider openai     → OpenAI TTS (requires OPENAI_API_KEY)
+--final --provider elevenlabs → ElevenLabs TTS (coming soon; requires ELEVENLABS_API_KEY)
+```
+
+Error codes:
+- `E_ADAPTER_MISSING_KEY` (exit 2) — required API key env var is absent at synth() call time.
+
+**Cloud extensibility:** adding a new cloud TTS provider requires only implementing `TtsAdapter` and registering it in `selectAdapter()`. The IR, compiler, and cache are untouched. Provider quirks (char limits, sentence chunking, request-stitching) live entirely inside the adapter and must be folded into `canonicalSettings` so the cache key stays correct.
 
 ### 4.5 Content-hash cache (the durable mechanism)
 
@@ -364,34 +379,51 @@ Loudness is **never** done per-segment and **never** inside the mix graph — on
 **Universal input conditioning.** Every input edge (cache wav, clip, bed) gets, unconditionally:
 
 ```
-aresample=48000:resampler=soxr, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000
+aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000
 ```
 
 Resampling on *every* edge (even already-48k inputs) keeps the graph uniform and removes a whole class of "this one input was a different rate/format" bugs. Kokoro's 24kHz cache audio is upsampled here, once.
+
+Note: `resampler=soxr` is intentionally omitted — soxr is not universally available in ffmpeg builds (Ubuntu apt-get ffmpeg, Homebrew default). The default `swr` resampler is used for portability.
+
+**Stereo expansion.** Conditioning always outputs mono (`channel_layouts=mono`). When `ir.channels === 2`, each clip is expanded from mono to stereo AFTER conditioning and gain, via a constant-power pan filter: `pan=stereo|c0=L*c0|c1=R*c0` where `theta = (1+pan)/2 * π/2`, `L = cos(theta)`, `R = sin(theta)` (6-decimal precision). This applies to all voice-lane clips and to bed clips. Native stereo source files are downmixed to mono by conditioning then re-expanded via pan — a documented Phase 2 limitation.
 
 ### 5.4 Filter topology (sketch)
 
 For a sequence of voice/clip nodes on the `voice` lane with one ducking bed:
 
 ```
-# ---- condition every input ----
-[0:a] aresample=48000:resampler=soxr, aformat=sample_fmts=fltp:channel_layouts=mono [v0];
-[1:a] aresample=48000:resampler=soxr, aformat=fltp:channel_layouts=mono [v1];
-[2:a] aresample=48000:resampler=soxr, aformat=fltp:channel_layouts=mono [bed_raw];
+# ---- condition every input (always mono; soxr omitted for portability — see §5.3) ----
+[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [v0];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [v1];
+[2:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [bed_raw];
 
 # ---- place voice-lane clips: trim + position in SAMPLES ----
-[v0] atrim=start_sample=0:end_sample=211200, asetpts=PTS-STARTPTS [v0p];
+[v0] atrim=start_sample=0:end_sample=211200, asetpts=PTS-STARTPTS [v0t];
 [v1] adelay=delays=211200S:all=1 [v1p];          # 'S' suffix = samples
 # ... acrossfade pairs serialized where a <Crossfade> exists ...
-[v0p][v1p] acrossfade=ns=36000:c1=tri:c2=tri [voicelane];   # ns = samples
+[v0t][v1p] acrossfade=ns=36000:c1=tri:c2=tri [voicelane_mono];  # ns = samples
 
-# ---- bed: fade + loop/trim to span, then duck under the voice lane ----
-[bed_raw] aloop=…, atrim=…, afade=in:…, afade=out:… [bed];
-[voicelane] asplit=2 [vc_mix][vc_key];           # one copy mixes, one copy keys the compressor
+# ---- per-clip stereo pan (stereo mode only; mono skips this step) ----
+# Constant-power law: theta = (1+pan)/2 * π/2; L = cos(θ); R = sin(θ).
+[v0t] pan=stereo|c0=L*c0|c1=R*c0 [v0p];
+[v1p] pan=stereo|c0=L*c0|c1=R*c0 [v1ps];
+# ... voice-lane assembly continues with stereo streams ...
+[v0p][v1ps] acrossfade=ns=36000:c1=tri:c2=tri [voicelane];
+
+# ---- bed: fade + loop/trim to span; stereo pan expansion in stereo mode ----
+[bed_raw] aloop=…, atrim=…, afade=in:…, afade=out:… [bed_mono];
+[bed_mono] pan=stereo|c0=L*c0|c1=R*c0 [bed];    # omitted in mono mode
+
+# ---- duck: split voice → mix copy + key copy ----
+[voicelane] asplit=2 [vc_mix][vc_key_raw];
+# Stereo mode: mono-sum the key so ducking depth is pan-independent.
+# Without this, a voice panned hard-left barely ducks the right bed channel.
+[vc_key_raw] pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 [vc_key]; # stereo only
 [bed][vc_key] sidechaincompress=threshold=…:ratio=…:attack=…:release=…:makeup=1 [bed_ducked];
 
 # ---- mix with EXPLICIT pre-gains, no auto-normalize ----
-[vc_mix]    volume=0dB [vc_g];
+[vc_mix]     volume=0dB [vc_g];
 [bed_ducked] volume=-12dB [bed_g];               # MusicBed.duck as the bed's resting level
 [vc_g][bed_g] amix=inputs=2:normalize=0:dropout_transition=0 [mix]
 ```
@@ -400,6 +432,8 @@ Key decisions baked in:
 
 - **Sample-domain placement** (`atrim=…_sample`, `adelay=…S`, `acrossfade=ns=…`) — never float seconds — for sample-accurate, deterministic positioning.
 - **`acrossfade` serialization** — crossfades are pairwise; a chain of N clips with crossfades is folded left-to-right into one lane.
+- **Per-clip stereo pan** — conditioning always outputs mono; each clip is expanded to stereo by a `pan=stereo|c0=L*c0|c1=R*c0` filter after conditioning and gain. The same applies to bed clips. Default pan is 0.0 (center: L=R=0.707).
+- **Pan-independent sidechain ducking** — in stereo mode the voice key is mono-summed before `sidechaincompress` so both bed channels are ducked equally regardless of the voice pan position. Without the mono-sum, `sidechaincompress` operates per-channel: a voice panned hard-left provides near-zero signal on the right channel key and barely ducks the right bed channel.
 - **Ducking via `asplit` → `sidechaincompress` → `amix normalize=0`** — the voice lane is split: one copy is mixed, one copy keys the compressor on the bed. `amix normalize=0` with **explicit per-input `volume`** pre-gains prevents ffmpeg's auto-normalization from silently changing levels (a documented footgun).
 - **`sidechaincompress` preset** — attack/release/threshold/ratio are a *pinned preset* (`speech-v1`, ~250–500ms release), recorded in the IR's `ducking[].preset`. (Tuning the preset by ear is a build task, not an architecture decision; the architecture only fixes *that it is a named, pinned, IR-recorded preset*.)
 - **`-filter_complex_script <file>`** — the graph is written to a file and passed by path, not as an argv string. Long episodes blow past argv length limits and shell-quoting is a footgun; a script file sidesteps both and is also the exact artifact golden tests diff.
@@ -531,7 +565,7 @@ Confirmed. The cache entry is one `<Voice>` = one TTS call (the natural unit of 
 At runtime the CLI reads `episode.tsx`, runs `esbuild.transform(code, { loader:'tsx', jsx:'automatic', jsxImportSource:'soundstage', format:'esm' })`, writes the result to a temp `.mjs` (or uses a data-URL import), and dynamically `import()`s it; the default export is the `<Episode>` tree. *Rationale:* esbuild is a single fast dependency that supports the automatic JSX runtime and `jsxImportSource` directly, with no global module-loader hijacking and no tsconfig coupling — we control exactly one transform call. Rejected: `tsx`/`jiti` (global loader interception we don't want), `ts-node` (slow, tsconfig-bound). User imports of relative TS files resolve through the same transform via esbuild's loader or a small import hook; v0.1 assumes a self-contained episode file plus npm deps.
 
 **OD-5 — Sample-rate & format: 48k master, f32 cache, JSON sidecar.**
-Master/internal rate is **48000 Hz, mono** (`<Episode sampleRate>` overridable). Kokoro's native **24kHz** cache audio is upsampled to 48k **once, in the compiler's unconditional `aresample` input edge** (soxr), never at cache-write time. Cache audio is stored **f32le** (Kokoro's native format) to avoid an extra quantization round-trip on write; the master intermediate is also f32le; only the final encode quantizes. The duration sidecar is **JSON** carrying ffprobe-measured `durationSamples` + rate + format + tool versions. *Rationale:* one resample point (the input edge) keeps the graph uniform and the conversion auditable; f32 cache preserves fidelity and matches the source exactly (best cache fidelity, simplest write path); JSON sidecar is trivially parseable and Phase B needs durations before the compiler runs.
+Master/internal rate is **48000 Hz** (`<Episode sampleRate>` overridable). Output channel count is **1 (mono) by default**; set `<Episode channels={2}>` for stereo. Kokoro's native **24kHz** cache audio is upsampled to 48k **once, in the compiler's unconditional `aresample` input edge** (using the default `swr` resampler — `soxr` is omitted for portability), never at cache-write time. Conditioning always outputs `channel_layouts=mono`; stereo expansion happens **per-clip after conditioning**, via a constant-power `pan` filter (see §5.3). Cache audio is stored **f32le** (Kokoro's native format) to avoid an extra quantization round-trip on write; the master intermediate is also f32le; only the final encode quantizes. The duration sidecar is **JSON** carrying ffprobe-measured `durationSamples` + rate + format + tool versions. *Rationale:* one resample point (the input edge) keeps the graph uniform and the conversion auditable; f32 cache preserves fidelity and matches the source exactly (best cache fidelity, simplest write path); JSON sidecar is trivially parseable and Phase B needs durations before the compiler runs.
 
 **OD-6 — Determinism wording:** §8 is authoritative. Claim: *byte-identical WAV master from the same cache + pinned ffmpeg.* Forbidden: *reproducible voices* / byte-identical mp3. The **cache is the determinism boundary**.
 
@@ -560,11 +594,19 @@ soundstage/
 
 ---
 
-## 12. Future Phase Considerations
+## 12. Current and Future Phase Considerations
+
+### Stereo audio (current — Phase 2)
+
+Stereo output is supported via `<Episode channels={2}>`. The mono→stereo approach: conditioning always outputs `channel_layouts=mono` (unchanged); stereo expansion happens per-clip via a constant-power `pan` filter after conditioning. Per-voice, per-clip, and per-bed pan positioning is supported in the range `[-1.0, 1.0]`. Mono is the default and unchanged by this addition.
+
+**Phase 2 limitation:** native stereo source files (e.g., a stereo bed WAV or stereo `<Clip>`) are downmixed to mono by conditioning then re-expanded via the `pan` filter. Round-trip mono→stereo does not preserve the original stereo width; future support for native stereo sources would require bypassing or replacing the mono conditioning for those inputs.
+
+### Future phases
 
 Decisions made now that protect later phases:
 
-- **The IR is the forward-compatibility lever.** Stereo (`channels:2`), multiple/layered beds, per-clip EQ, in-`<Voice>` `<Pause>`, and **music-generation sources** are all *additive* extensions behind a `schemaVersion` bump — none require touching the jsx-runtime or the compiler's core topology. A future external tool can even emit the IR directly.
+- **The IR is the forward-compatibility lever.** Multiple/layered beds, per-clip EQ, in-`<Voice>` `<Pause>`, and **music-generation sources** are all *additive* extensions behind a `schemaVersion` bump — none require touching the jsx-runtime or the compiler's core topology. A future external tool can even emit the IR directly.
 - **The adapter seam generalizes to music-gen.** A `<MusicBed generate="lo-fi 90bpm">` would route to a generator adapter using the *identical* `id`/`model`/`canonicalSettings`/cache machinery — the cache and determinism story extend for free.
 - **Localized media at scale** (one Episode → N languages, re-synth only the deltas) falls out of the existing cache design: change `voice`/text per locale, everything unchanged stays cached. No architecture change — only a higher-level driver.
 - **A hosted renderer** (separate service, out of scope) would consume the same IR and reuse the compiler verbatim; the spine is built to be that service's core without a rewrite. Its auth, multi-tenancy, and storage are a *separate* design.

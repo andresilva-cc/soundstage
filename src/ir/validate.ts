@@ -80,6 +80,44 @@ function validateNode(
     }
   }
 
+  // Validate <Episode channels> when set: must be exactly 1 or 2 (integer).
+  if (typeName === COMPONENT_NAMES.Episode) {
+    const channels = node.props["channels"];
+    if (channels !== undefined) {
+      if (
+        typeof channels !== "number" ||
+        !Number.isFinite(channels) ||
+        !Number.isInteger(channels) ||
+        (channels !== 1 && channels !== 2)
+      ) {
+        throw new SoundstageError(
+          "E_INVALID_PROP",
+          `<Episode> channels must be 1 or 2, got ${JSON.stringify(channels)}`,
+          nodePath,
+        );
+      }
+    }
+  }
+
+  // Validate pan prop on <Voice>, <Clip>, <MusicBed> when set: finite number in [-1.0, 1.0].
+  const PAN_PROP_TYPES: Set<string> = new Set([
+    COMPONENT_NAMES.Voice,
+    COMPONENT_NAMES.Clip,
+    COMPONENT_NAMES.MusicBed,
+  ]);
+  if (PAN_PROP_TYPES.has(typeName)) {
+    const pan = node.props["pan"];
+    if (pan !== undefined) {
+      if (typeof pan !== "number" || !Number.isFinite(pan) || pan < -1.0 || pan > 1.0) {
+        throw new SoundstageError(
+          "E_INVALID_PROP",
+          `<${typeName}> pan must be a finite number in [-1.0, 1.0], got ${JSON.stringify(pan)}`,
+          nodePath,
+        );
+      }
+    }
+  }
+
   // Check src path existence (resolve relative paths against baseDir)
   const srcProps = SRC_PROPS[typeName];
   if (srcProps !== undefined) {

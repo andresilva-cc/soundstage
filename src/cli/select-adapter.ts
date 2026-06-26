@@ -39,9 +39,8 @@ export async function selectAdapter(
     case "openai":
       return new OpenAiAdapter();
     case "elevenlabs":
-      // T2 will implement this adapter; handleError already adds "soundstage: error: " prefix.
-      throw new Error(
-        `--provider elevenlabs is not yet available (coming soon)`,
+      return import("../adapters/elevenlabs/index.js").then(
+        ({ ElevenLabsAdapter }) => new ElevenLabsAdapter({ model: "eleven_multilingual_v2" }),
       );
     default:
       // handleError prepends "soundstage: error: " — do NOT duplicate it here.

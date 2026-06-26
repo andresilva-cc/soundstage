@@ -29,11 +29,11 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       thresholds: {
-        // Placeholder — raise as coverage grows across tasks
-        lines: 0,
-        functions: 0,
-        branches: 0,
-        statements: 0,
+        // Measured with NO_KOKORO=1 (hermetic CI) 2026-06-26: lines 75.91%, branches 80.76%, functions 96.55%, statements 75.91%
+        lines: 74,
+        branches: 78,
+        functions: 95,
+        statements: 74,
       },
     },
   },

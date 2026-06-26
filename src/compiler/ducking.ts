@@ -172,12 +172,21 @@ function buildBedTrack(
 }
 
 // ---------------------------------------------------------------------------
-// Main export: wire voice lane + bed tracks → master mix label.
+// Main export: wire voice lane + N bed tracks → master mix label.
 // Returns the label that should be mapped to output (replaces [voicelane]).
 // ---------------------------------------------------------------------------
 
 /**
- * Build the sidechain ducking topology per §5.4.
+ * Build the sidechain ducking topology per §5.4 for N concurrent beds.
+ *
+ * Topology for N beds:
+ *   asplit=N+1 on the voice lane: N copies key each per-bed sidechaincompress;
+ *   1 copy goes to the final amix (after volume=0dB pre-gain).
+ *   For each bed i: buildBedTrack() → sidechaincompress(key_i) → volume=reductionDb_i.
+ *   Final: amix=inputs=N+1:normalize=0:dropout_transition=0.
+ *
+ * In stereo mode each key copy is mono-summed before sidechaincompress so ducking
+ * depth is pan-independent (a voice panned hard-left still keys all bed channels).
  *
  * @param voiceLaneLabel  The `[voicelane]` label produced by the voice-lane builder.
  * @param ducking         ir.ducking (non-empty — caller must not call this for empty).
@@ -192,57 +201,61 @@ export function buildDuckingTopology(
   ctx: BedBuildContext,
 ): string {
   const { lines, label, assertFinite } = ctx;
+  const N = ducking.length;
 
-  if (ducking.length !== 1) {
-    // Defensive assert — validateIR() in compileIR() is the user-facing error path.
-    // This branch should be unreachable when compileIR is the caller.
-    throw new Error(
-      `compileIR: internal assert failed — expected exactly 1 ducking entry, got ${ducking.length}`,
-    );
+  // --- Build all N bed tracks first (pushes conditioning/trim/fade/pan/delay lines) ---
+  const bedLabels: string[] = [];
+  for (let i = 0; i < N; i++) {
+    const duck = ducking[i]!;
+    if (duck.duckUnderTrackId !== "voice") {
+      throw new Error(
+        `compileIR: ducking[${i}].duckUnderTrackId must be "voice", got "${duck.duckUnderTrackId}"`,
+      );
+    }
+    assertFinite(duck.reductionDb, `ducking[${i}].reductionDb`);
+    const bedClips = ir.clips.filter(c => c.trackId === duck.bedTrackId);
+    bedLabels.push(buildBedTrack(bedClips, ctx));
   }
 
-  const duck = ducking[0]!;
-  if (duck.duckUnderTrackId !== "voice") {
-    throw new Error(
-      `compileIR: ducking[0].duckUnderTrackId must be "voice", got "${duck.duckUnderTrackId}"`,
-    );
-  }
-  assertFinite(duck.reductionDb, "ducking[0].reductionDb");
-
-  // --- Build bed track ---
-  const bedClips = ir.clips.filter(c => c.trackId === duck.bedTrackId);
-  const bedLabel = buildBedTrack(bedClips, ctx);
-
-  // --- asplit voice lane → one copy for mix, one copy to key the compressor ---
+  // --- asplit=N+1: one mix copy + N key copies (one per bed) ---
   const vcMix = label("vc");
-  const vcKeyRaw = label("vc");
-  lines.push(`${voiceLaneLabel} asplit=2 ${vcMix}${vcKeyRaw}`);
+  const vcKeyRaws: string[] = Array.from({ length: N }, () => label("vc"));
+  lines.push(`${voiceLaneLabel} asplit=${N + 1} ${vcMix}${vcKeyRaws.join("")}`);
 
-  // In stereo mode the voice key is panned, so sidechaincompress would reduce each
-  // bed channel by that channel's key level only — a voice panned hard-left barely
-  // ducks the bed's right channel. Fix: mono-sum the key and broadcast to both
-  // channels before sidechaincompress so ducking depth is pan-independent.
-  let vcKey = vcKeyRaw;
-  if (ctx.channels === 2) {
-    const vcKeyMono = label("vc");
-    lines.push(`${vcKeyRaw} pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 ${vcKeyMono}`);
-    vcKey = vcKeyMono;
+  // --- Per-bed: optional stereo mono-sum, sidechaincompress, bed volume ---
+  // Collect bed gain labels for amix; voice gain is emitted afterwards so that
+  // the N=1 line order matches the pre-T4 output exactly (voice vol before bed vol).
+  const bedDuckeds: string[] = [];
+  for (let i = 0; i < N; i++) {
+    // In stereo mode the key is panned — mono-sum it so ducking depth is pan-independent.
+    let vcKey = vcKeyRaws[i]!;
+    if (ctx.channels === 2) {
+      const vcKeyMono = label("vc");
+      lines.push(`${vcKey} pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 ${vcKeyMono}`);
+      vcKey = vcKeyMono;
+    }
+    const bedDucked = label("bd");
+    const params = sidechainParams(ducking[i]!.preset);
+    lines.push(`${bedLabels[i]}${vcKey} sidechaincompress=${params} ${bedDucked}`);
+    bedDuckeds.push(bedDucked);
   }
 
-  // --- sidechaincompress: bed input, voice key ---
-  const bedDucked = label("bd");
-  const params = sidechainParams(duck.preset);
-  lines.push(`${bedLabel}${vcKey} sidechaincompress=${params} ${bedDucked}`);
-
-  // --- explicit pre-gain volumes (no auto-normalize) ---
+  // --- Voice pre-gain (0 dB) then per-bed pre-gain volumes ---
   const vcGain = label("vg");
-  const bedGain = label("bg");
   lines.push(`${vcMix} volume=0dB ${vcGain}`);
-  lines.push(`${bedDucked} volume=${duck.reductionDb}dB ${bedGain}`);
 
-  // --- amix: normalize=0, dropout_transition=0 ---
+  const bedGains: string[] = [];
+  for (let i = 0; i < N; i++) {
+    const bedGain = label("bg");
+    lines.push(`${bedDuckeds[i]} volume=${ducking[i]!.reductionDb}dB ${bedGain}`);
+    bedGains.push(bedGain);
+  }
+
+  // --- amix: N+1 inputs (voice first, then beds in order) ---
   const master = label("m");
-  lines.push(`${vcGain}${bedGain} amix=inputs=2:normalize=0:dropout_transition=0 ${master}`);
+  lines.push(
+    `${vcGain}${bedGains.join("")} amix=inputs=${N + 1}:normalize=0:dropout_transition=0 ${master}`,
+  );
 
   return master;
 }

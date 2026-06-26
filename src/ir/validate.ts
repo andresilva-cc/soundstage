@@ -175,22 +175,13 @@ function isAudioSibling(child: unknown): boolean {
 }
 
 /**
- * Validate a compiled IR for constraints the compiler cannot recover from.
- * Throws SoundstageError on violation so the error reaches the user before
- * any ffmpeg invocation.
- *
- * Currently checked:
- *   - E_MULTI_BED_UNSUPPORTED: more than one ducking entry (v0.1 limitation).
+ * Extension point for IR-level validation before any ffmpeg invocation.
+ * Currently a no-op: E_MULTI_BED_UNSUPPORTED was lifted in T4 and no new
+ * IR-level constraints have been added. Per-bed invariants (e.g. single clip
+ * per bed track) are enforced inside buildBedTrack() in ducking.ts.
  */
-export function validateIR(ir: IR): void {
-  if (ir.ducking.length > 1) {
-    const trackIds = ir.ducking.map(d => d.bedTrackId).join(", ");
-    throw new SoundstageError(
-      "E_MULTI_BED_UNSUPPORTED",
-      `v0.1 supports exactly 1 MusicBed (ducking entry) per episode, got ${ir.ducking.length} (trackIds: ${trackIds})`,
-      "ir.ducking",
-    );
-  }
+export function validateIR(_ir: IR): void {
+  // No IR-level constraints currently enforced here.
 }
 
 /**

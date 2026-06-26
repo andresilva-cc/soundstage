@@ -1,0 +1,77 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`AC4: 2-bed IR topology > 2-bed filter script snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[c1] anull [voicelane];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b2];
+[b2] apad [b3];
+[b3] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [b4];
+[2:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b5];
+[b5] apad [b6];
+[b6] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [b7];
+[voicelane] asplit=3 [vc8][vc9][vc10];
+[b4][vc9] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd11];
+[b7][vc10] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd12];
+[vc8] volume=0dB [vg13];
+[bd11] volume=-12dB [bg14];
+[bd12] volume=-12dB [bg15];
+[vg13][bg14][bg15] amix=inputs=3:normalize=0:dropout_transition=0 [m16];"
+`;
+
+exports[`AC5: 1-bed regression (N=1) > 1-bed filter script snapshot (regression) 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[c1] anull [voicelane];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b2];
+[b2] apad [b3];
+[b3] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [b4];
+[voicelane] asplit=2 [vc5][vc6];
+[b4][vc6] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd7];
+[vc5] volume=0dB [vg8];
+[bd7] volume=-12dB [bg9];
+[vg8][bg9] amix=inputs=2:normalize=0:dropout_transition=0 [m10];"
+`;
+
+exports[`AC6: 3-bed IR topology > 3-bed filter script snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[c1] anull [voicelane];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b2];
+[b2] apad [b3];
+[b3] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [b4];
+[2:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b5];
+[b5] apad [b6];
+[b6] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [b7];
+[3:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b8];
+[b8] apad [b9];
+[b9] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [b10];
+[voicelane] asplit=4 [vc11][vc12][vc13][vc14];
+[b4][vc12] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd15];
+[b7][vc13] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd16];
+[b10][vc14] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd17];
+[vc11] volume=0dB [vg18];
+[bd15] volume=-12dB [bg19];
+[bd16] volume=-12dB [bg20];
+[bd17] volume=-12dB [bg21];
+[vg18][bg19][bg20][bg21] amix=inputs=4:normalize=0:dropout_transition=0 [m22];"
+`;
+
+exports[`AC7: per-bed reductionDb in volume= filter > snapshot with distinct reductionDb values 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[c1] anull [voicelane];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b2];
+[b2] apad [b3];
+[b3] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [b4];
+[2:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b5];
+[b5] apad [b6];
+[b6] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [b7];
+[voicelane] asplit=3 [vc8][vc9][vc10];
+[b4][vc9] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd11];
+[b7][vc10] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd12];
+[vc8] volume=0dB [vg13];
+[bd11] volume=-12dB [bg14];
+[bd12] volume=-18dB [bg15];
+[vg13][bg14][bg15] amix=inputs=3:normalize=0:dropout_transition=0 [m16];"
+`;

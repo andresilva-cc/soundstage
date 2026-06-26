@@ -392,13 +392,15 @@ Note: `resampler=soxr` is intentionally omitted — soxr is not universally avai
 
 ### 5.4 Filter topology (sketch)
 
-For a sequence of voice/clip nodes on the `voice` lane with one ducking bed:
+For a sequence of voice/clip nodes on the `voice` lane with N concurrent ducking beds (N ≥ 1):
 
 ```
 # ---- condition every input (always mono; soxr omitted for portability — see §5.3) ----
 [0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [v0];
 [1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [v1];
-[2:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [bed_raw];
+[2:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [bed0_raw];
+[3:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [bed1_raw];
+# (one input per bed)
 
 # ---- place voice-lane clips: trim + position in SAMPLES ----
 [v0] atrim=start_sample=0:end_sample=211200, asetpts=PTS-STARTPTS [v0t];
@@ -413,21 +415,26 @@ For a sequence of voice/clip nodes on the `voice` lane with one ducking bed:
 # ... voice-lane assembly continues with stereo streams ...
 [v0p][v1ps] acrossfade=ns=36000:c1=tri:c2=tri [voicelane];
 
-# ---- bed: fade + loop/trim to span; stereo pan expansion in stereo mode ----
-[bed_raw] aloop=…, atrim=…, afade=in:…, afade=out:… [bed_mono];
-[bed_mono] pan=stereo|c0=L*c0|c1=R*c0 [bed];    # omitted in mono mode
+# ---- beds: fade + loop/trim to span; stereo pan expansion in stereo mode ----
+[bed0_raw] aloop=…, atrim=…, afade=in:…, afade=out:… [bed0_mono];
+[bed0_mono] pan=stereo|c0=L*c0|c1=R*c0 [bed0];  # omitted in mono mode
+[bed1_raw] apad, atrim=… [bed1_mono];
+[bed1_mono] pan=stereo|c0=L*c0|c1=R*c0 [bed1];
 
-# ---- duck: split voice → mix copy + key copy ----
-[voicelane] asplit=2 [vc_mix][vc_key_raw];
-# Stereo mode: mono-sum the key so ducking depth is pan-independent.
+# ---- duck: split voice → 1 mix copy + N key copies (one per bed) ----
+[voicelane] asplit=3 [vc_mix][vc_key_raw0][vc_key_raw1];  # asplit=N+1
+# Stereo mode: mono-sum each key so ducking depth is pan-independent.
 # Without this, a voice panned hard-left barely ducks the right bed channel.
-[vc_key_raw] pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 [vc_key]; # stereo only
-[bed][vc_key] sidechaincompress=threshold=…:ratio=…:attack=…:release=…:makeup=1 [bed_ducked];
+[vc_key_raw0] pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 [vc_key0]; # stereo only
+[vc_key_raw1] pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 [vc_key1]; # stereo only
+[bed0][vc_key0] sidechaincompress=threshold=…:ratio=…:attack=…:release=…:makeup=1 [bd0];
+[bed1][vc_key1] sidechaincompress=threshold=…:ratio=…:attack=…:release=…:makeup=1 [bd1];
 
 # ---- mix with EXPLICIT pre-gains, no auto-normalize ----
-[vc_mix]     volume=0dB [vc_g];
-[bed_ducked] volume=-12dB [bed_g];               # MusicBed.duck as the bed's resting level
-[vc_g][bed_g] amix=inputs=2:normalize=0:dropout_transition=0 [mix]
+[vc_mix] volume=0dB [vc_g];
+[bd0]    volume=-12dB [bg0];                     # MusicBed.duck for bed-0
+[bd1]    volume=-18dB [bg1];                     # MusicBed.duck for bed-1
+[vc_g][bg0][bg1] amix=inputs=3:normalize=0:dropout_transition=0 [mix]  # inputs=N+1
 ```
 
 Key decisions baked in:
@@ -435,8 +442,8 @@ Key decisions baked in:
 - **Sample-domain placement** (`atrim=…_sample`, `adelay=…S`, `acrossfade=ns=…`) — never float seconds — for sample-accurate, deterministic positioning.
 - **`acrossfade` serialization** — crossfades are pairwise; a chain of N clips with crossfades is folded left-to-right into one lane.
 - **Per-clip stereo pan** — conditioning always outputs mono; each clip is expanded to stereo by a `pan=stereo|c0=L*c0|c1=R*c0` filter after conditioning and gain. The same applies to bed clips. Default pan is 0.0 (center: L=R=0.707).
-- **Pan-independent sidechain ducking** — in stereo mode the voice key is mono-summed before `sidechaincompress` so both bed channels are ducked equally regardless of the voice pan position. Without the mono-sum, `sidechaincompress` operates per-channel: a voice panned hard-left provides near-zero signal on the right channel key and barely ducks the right bed channel.
-- **Ducking via `asplit` → `sidechaincompress` → `amix normalize=0`** — the voice lane is split: one copy is mixed, one copy keys the compressor on the bed. `amix normalize=0` with **explicit per-input `volume`** pre-gains prevents ffmpeg's auto-normalization from silently changing levels (a documented footgun).
+- **Pan-independent sidechain ducking** — in stereo mode each voice key copy is mono-summed before `sidechaincompress` so both bed channels are ducked equally regardless of the voice pan position. Without the mono-sum, `sidechaincompress` operates per-channel: a voice panned hard-left provides near-zero signal on the right channel key and barely ducks the right bed channel.
+- **N-bed ducking via `asplit=N+1` → N × `sidechaincompress` → `amix=inputs=N+1 normalize=0`** — the voice lane is split into N+1 copies: one for the final mix, one key per bed. Each bed gets its own independent `sidechaincompress` instance. `amix normalize=0` with **explicit per-input `volume`** pre-gains prevents ffmpeg's auto-normalization from silently changing levels (a documented footgun).
 - **`sidechaincompress` preset** — attack/release/threshold/ratio are a *pinned preset* (`speech-v1`, ~250–500ms release), recorded in the IR's `ducking[].preset`. (Tuning the preset by ear is a build task, not an architecture decision; the architecture only fixes *that it is a named, pinned, IR-recorded preset*.)
 - **`-filter_complex_script <file>`** — the graph is written to a file and passed by path, not as an argv string. Long episodes blow past argv length limits and shell-quoting is a footgun; a script file sidesteps both and is also the exact artifact golden tests diff.
 

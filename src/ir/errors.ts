@@ -7,7 +7,6 @@ export type ErrorCode =
   | "E_CROSSFADE_DURATION" // thrown in Task 7 (Phase B, where sample durations are known) — not dead code
   | "E_INVALID_PROP"
   | "E_MAX_DEPTH"
-  | "E_MULTI_BED_UNSUPPORTED"
   | "E_ARTWORK_NOT_FOUND"
   | "E_NO_DEFAULT_EXPORT"
   | "E_ADAPTER_MISSING_KEY" // thrown by cloud adapters when required API key env var is absent

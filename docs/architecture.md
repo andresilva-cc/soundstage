@@ -253,6 +253,7 @@ interface SynthResult {
 
 - **Kokoro** (`id:"kokoro"`, default for `--final`) — lazy `import('kokoro-js')`, `dtype:"q8"`, returns 24kHz mono f32. `canonicalSettings` = `{ speed }`. Keyless, local, no API cost.
 - **OpenAI** (`id:"openai"`, `--provider openai`) — native `fetch` to `POST /v1/audio/speech`, `response_format:"pcm"`, returns raw int16 PCM at 24kHz, 1 ch, converted to f32 on receipt. Model is a constructor parameter (default `"tts-1"`; `"tts-1-hd"` also supported — model is part of the cache key, so the two produce independent entries). `canonicalSettings` = `{ speed }`. API key from `OPENAI_API_KEY` env var at synth() call time. No SDK peer dep — single REST endpoint. Retries on HTTP 429/5xx via the shared `withRetry` utility (`src/adapters/cloud/retry.ts`).
+- **ElevenLabs** (`id:"elevenlabs"`, `--provider elevenlabs`) — lazy `import('elevenlabs')` (optional peer dep). The `voice` prop value is the ElevenLabs **voice UUID** directly (e.g. `"21m00Tcm4TlvDq8ikWAM"`) — no name→ID lookup. Output format: `pcm_24000` (int16 at 24kHz, 1 ch), converted to f32 on receipt. Model is a constructor parameter (e.g. `"eleven_multilingual_v2"`; CLI default). `canonicalSettings` = `{ stability, similarity_boost, style, use_speaker_boost }` — all four settings resolved to their defaults so `undefined` and the explicit default never produce different cache keys. API key from `ELEVENLABS_API_KEY` env var at synth() call time — never stored. Handles ElevenLabs per-request character limits (~2400 chars) internally: splits at sentence boundaries, makes N sequential API calls, concatenates the int16 PCM. This internal chunking is transparent to the cache (cache key uses the full normalized `<Voice>` text). Retries on HTTP 429/5xx via `withRetry` (`src/adapters/cloud/retry.ts`).
 - **Synthetic** (`id:"synthetic"`, test fixture) — text → deterministic tone whose frequency/duration are derived from a hash of the text (so different text → different, stable audio), returned with a real sample count. Used by CI and golden tests; **needs no model and no network**.
 
 **Adapter selection (CLI `--provider` flag):**
@@ -262,11 +263,12 @@ interface SynthResult {
 --final                       → kokoro (default, backward-compat)
 --final --provider kokoro     → kokoro (explicit)
 --final --provider openai     → OpenAI TTS (requires OPENAI_API_KEY)
---final --provider elevenlabs → ElevenLabs TTS (coming soon; requires ELEVENLABS_API_KEY)
+--final --provider elevenlabs → ElevenLabs TTS (requires ELEVENLABS_API_KEY)
 ```
 
 Error codes:
 - `E_ADAPTER_MISSING_KEY` (exit 2) — required API key env var is absent at synth() call time.
+- `E_ADAPTER_REQUEST_FAILED` (exit 2) — API call failed after all retries.
 
 **Cloud extensibility:** adding a new cloud TTS provider requires only implementing `TtsAdapter` and registering it in `selectAdapter()`. The IR, compiler, and cache are untouched. Provider quirks (char limits, sentence chunking, request-stitching) live entirely inside the adapter and must be folded into `canonicalSettings` so the cache key stays correct.
 

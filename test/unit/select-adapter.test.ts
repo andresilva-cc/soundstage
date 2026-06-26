@@ -73,6 +73,13 @@ describe("selectAdapter — final mode, provider 'openai'", () => {
   });
 });
 
+describe("selectAdapter — final mode, provider 'elevenlabs'", () => {
+  it("returns an adapter with id 'elevenlabs'", async () => {
+    const adapter = await selectAdapter("final", "elevenlabs");
+    expect(adapter.id).toBe("elevenlabs");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Unknown provider — throws
 // ---------------------------------------------------------------------------

@@ -1,0 +1,25 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`stereo bed snapshot > stereo IR with bed has pan=stereo filter in bed section 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[c1] pan=stereo|c0=0.707107*c0|c1=0.707107*c0 [c2];
+[c2] anull [voicelane];
+[1:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [b3];
+[b3] apad [b4];
+[b4] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [b5];
+[b5] pan=stereo|c0=0.707107*c0|c1=0.707107*c0 [b6];
+[voicelane] asplit=2 [vc7][vc8];
+[vc8] pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 [vc9];
+[b6][vc9] sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1:knee=2.82843 [bd10];
+[vc7] volume=0dB [vg11];
+[bd10] volume=-12dB [bg12];
+[vg11][bg12] amix=inputs=2:normalize=0:dropout_transition=0 [m13];"
+`;
+
+exports[`stereo voice-lane snapshot > stereo IR with one clip produces pan=stereo filter — snapshot 1`] = `
+"[0:a] aresample=48000, aformat=sample_fmts=fltp:channel_layouts=mono:sample_rates=48000 [c0];
+[c0] atrim=start_sample=0:end_sample=48000, asetpts=PTS-STARTPTS [c1];
+[c1] pan=stereo|c0=0.707107*c0|c1=0.707107*c0 [c2];
+[c2] anull [voicelane];"
+`;

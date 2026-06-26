@@ -45,6 +45,8 @@ export interface ClipIR {
   startSample: number;
   durationSamples: number;
   gainDb: number;
+  /** Stereo pan: -1.0 (full left) to 1.0 (full right). Absent = center (0.0). */
+  pan?: number;
   loop?: boolean;
   trim?: TrimIR;
   fades?: FadesIR;
@@ -88,7 +90,8 @@ export interface RenderIR {
 export interface IR {
   schemaVersion: number;
   sampleRate: number;
-  channels: 1;
+  /** Output channel count. 1 = mono (default), 2 = stereo. */
+  channels: 1 | 2;
   episode: EpisodeIR;
   tracks: TrackIR[];
   clips: ClipIR[];
@@ -250,6 +253,7 @@ function placeNode(
       voiceUnitId: number;
     };
     const durationSamples = el.props["durationSamples"] as number;
+    const pan = el.props["pan"] as number | undefined;
 
     const clip: ClipIR = {
       id: `c${state.clipCounter.value++}`,
@@ -263,6 +267,7 @@ function placeNode(
       startSample,
       durationSamples,
       gainDb: 0.0,
+      ...(pan !== undefined ? { pan } : {}),
     };
     state.clips.push(clip);
     return durationSamples;
@@ -273,6 +278,7 @@ function placeNode(
     const sourceRef = el.props["sourceRef"] as { kind: "file"; path: string };
     const durationSamples = el.props["durationSamples"] as number;
     const gain = (el.props["gain"] as number | undefined) ?? 0.0;
+    const pan = el.props["pan"] as number | undefined;
 
     const clip: ClipIR = {
       id: `c${state.clipCounter.value++}`,
@@ -281,6 +287,7 @@ function placeNode(
       startSample,
       durationSamples,
       gainDb: gain,
+      ...(pan !== undefined ? { pan } : {}),
     };
     state.clips.push(clip);
     return durationSamples;
@@ -319,6 +326,7 @@ function placeNode(
     const fadeIn = el.props["fadeIn"] as number | undefined;
     const fadeOut = el.props["fadeOut"] as number | undefined;
     const loop = (el.props["loop"] as boolean | undefined) ?? false;
+    const pan = el.props["pan"] as number | undefined;
 
     const childElements = el.children.filter(
       (c): c is SoundstageElement =>
@@ -351,6 +359,7 @@ function placeNode(
       startSample: bedStart,
       durationSamples: bedDuration,
       gainDb: 0.0,
+      ...(pan !== undefined ? { pan } : {}),
     };
 
     if (loop) {
@@ -435,6 +444,8 @@ function findLastVoiceClipIndex(clips: ClipIR[]): number {
 export function phaseB(resolvedTree: SoundstageElement): IR {
   const props = resolvedTree.props;
   const sampleRate = (props["sampleRate"] as number | undefined) ?? 48000;
+  const channelsProp = (props["channels"] as number | undefined) ?? 1;
+  const channels: 1 | 2 = channelsProp === 2 ? 2 : 1;
   const episodeTitle = props["title"] as string;
   const episodeAuthor = props["author"] as string | undefined;
   const episodeArtwork = props["artwork"] as string | undefined;
@@ -471,7 +482,7 @@ export function phaseB(resolvedTree: SoundstageElement): IR {
   return {
     schemaVersion: SCHEMA_VERSION,
     sampleRate,
-    channels: 1,
+    channels,
     episode,
     tracks,
     clips: state.clips,

@@ -14,6 +14,8 @@ export interface EpisodeProps extends VoiceDefaults {
   author?: string;
   artwork?: string;
   sampleRate?: number;
+  /** Output channel count: 1 = mono (default), 2 = stereo. */
+  channels?: 1 | 2;
   children?: SoundstageElement | SoundstageElement[];
 }
 
@@ -26,6 +28,8 @@ export interface VoiceProps {
   voice?: string;      // required but may be inherited; validated after inheritance
   provider?: string;
   speed?: number;
+  /** Stereo pan position: -1.0 (full left) to 1.0 (full right). Default 0.0 (center). */
+  pan?: number;
   children?: string | string[];
 }
 
@@ -35,6 +39,8 @@ export interface MusicBedProps {
   fadeIn?: number;
   fadeOut?: number;
   loop?: boolean;
+  /** Stereo pan position: -1.0 (full left) to 1.0 (full right). Default 0.0 (center). */
+  pan?: number;
   children?: SoundstageElement | SoundstageElement[];
 }
 
@@ -42,6 +48,8 @@ export interface ClipProps {
   src: string;
   gain?: number;
   trim?: { start: number; end: number };
+  /** Stereo pan position: -1.0 (full left) to 1.0 (full right). Default 0.0 (center). */
+  pan?: number;
 }
 
 export interface SilenceProps {

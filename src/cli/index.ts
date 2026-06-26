@@ -5,7 +5,7 @@
 import { Command } from "commander";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, basename, extname, join } from "node:path";
-import { mkdtemp, rm, mkdir, access } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, access, stat, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { loadTsx } from "./loader.js";
 import { phaseA } from "../ir/phase-a.js";
@@ -22,6 +22,9 @@ import { runChapterPostPass } from "../compiler/chapters.js";
 import { buildCacheReport, formatCacheReport } from "./report.js";
 import { generateWaveform, generatePlayer } from "../compiler/player.js";
 import { readRenderState, writeRenderState, hashIR } from "./render-state.js";
+import { validateFeedConfig, buildFeedXml } from "../compiler/feed.js";
+import type { EpisodeMeta } from "../compiler/feed.js";
+import { probeFileDuration } from "../probe/index.js";
 
 // ---------------------------------------------------------------------------
 // Exit codes (§4.6)
@@ -375,6 +378,98 @@ program
 
     try {
       await runRender(file, opts);
+    } catch (err) {
+      handleError(err);
+    }
+  });
+
+// ---------------------------------------------------------------------------
+// Feed command
+// ---------------------------------------------------------------------------
+
+interface FeedOptions {
+  config: string;
+  out?: string;
+}
+
+program
+  .command("feed")
+  .description("Generate a podcast RSS feed (feed.xml) from soundstage-feed.json")
+  .option("--config <path>", "Path to soundstage-feed.json", "soundstage-feed.json")
+  .option("--out <dir>", "Output directory (default: directory of config file)")
+  .action(async (opts: FeedOptions) => {
+    const configPath = resolve(opts.config);
+    const configDir = dirname(configPath);
+    const outDir = opts.out !== undefined ? resolve(opts.out) : configDir;
+
+    // 1. Read and parse config file.
+    let rawConfig: unknown;
+    try {
+      const text = await readFile(configPath, "utf8");
+      rawConfig = JSON.parse(text) as unknown;
+    } catch (err) {
+      printError(
+        `soundstage feed: config file not found or unreadable: ${configPath}` +
+          (err instanceof Error ? ` (${err.message})` : ""),
+      );
+      process.exit(EXIT_USER_ERROR);
+    }
+
+    // 2. Validate config.
+    let config;
+    try {
+      config = validateFeedConfig(rawConfig);
+    } catch (err) {
+      printError(err instanceof Error ? err.message : String(err));
+      process.exit(EXIT_USER_ERROR);
+    }
+
+    // 3. Build episode metadata (stat + ffprobe each mp3).
+    const episodeMetas = [];
+    for (const ep of config.episodes) {
+      const mp3Path = resolve(configDir, ep.file);
+
+      let byteSize: number;
+      try {
+        const s = await stat(mp3Path);
+        byteSize = Number(s.size);
+      } catch {
+        printError(`soundstage feed: mp3 file not found: ${mp3Path}`);
+        process.exit(EXIT_USER_ERROR);
+      }
+
+      let durationSeconds: number;
+      try {
+        const { durationSamples, sampleRate } = await probeFileDuration(mp3Path);
+        durationSeconds = Math.round(durationSamples / sampleRate);
+      } catch (err) {
+        printError(
+          `soundstage feed: ffprobe failed for ${mp3Path}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(EXIT_FFMPEG_ERROR);
+      }
+
+      const url = config.show.baseUrl + basename(mp3Path);
+      const meta: EpisodeMeta = {
+        guid: ep.guid,
+        title: ep.title,
+        pubDate: ep.pubDate,
+        url,
+        byteSize,
+        durationSeconds,
+      };
+      if (ep.description !== undefined) meta.description = ep.description;
+      if (ep.explicit !== undefined) meta.explicit = ep.explicit;
+      episodeMetas.push(meta);
+    }
+
+    // 4–6. Build XML + write to disk.
+    try {
+      const xml = buildFeedXml(config, episodeMetas);
+      await mkdir(outDir, { recursive: true });
+      const feedPath = join(outDir, "feed.xml");
+      await writeFile(feedPath, xml, "utf8");
+      process.stdout.write("soundstage: feed → feed.xml\n");
     } catch (err) {
       handleError(err);
     }

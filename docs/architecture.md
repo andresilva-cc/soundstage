@@ -534,6 +534,45 @@ ffmpeg -i episode.mp3 -lavfi "showwavespic=s=1200x120:colors=steelblue:filter=pe
 
 All `--player` logic lives in `src/compiler/player.ts`. If `generateWaveform` fails (e.g. ffmpeg not found), the CLI surfaces the error to stderr and exits with code 3 (ffmpeg error path).
 
+### 6.2 `soundstage feed` — podcast RSS feed
+
+The `soundstage feed` subcommand generates a spec-compliant RSS 2.0 + Apple Podcasts feed XML from a `soundstage-feed.json` config file:
+
+```sh
+npx soundstage feed --config soundstage-feed.json [--out <dir>]
+# → feed.xml  (RSS 2.0 + itunes: + atom: namespaces, Apple Podcasts compliant)
+```
+
+**Config file format (`soundstage-feed.json`):**
+
+| Field | Required | Notes |
+|---|---|---|
+| `show.title` | yes | Channel `<title>` |
+| `show.description` | yes | Channel `<description>` |
+| `show.author` | yes | `<itunes:author>` |
+| `show.email` | no (warn) | `<itunes:email>` inside `<itunes:owner>`; absent blocks Apple submission |
+| `show.imageUrl` | yes | `<itunes:image href>` |
+| `show.category` | yes | Must be from Apple Podcasts taxonomy (validated at config-read time) |
+| `show.language` | yes | e.g. `"en-us"` |
+| `show.baseUrl` | yes | Prefix for enclosure URLs; normalized to end with `/` |
+| `show.feedUrl` | yes | Canonical URL of the feed XML itself; used for `<atom:link rel="self">` |
+| `show.link` | no | Channel `<link>`; defaults to `baseUrl` |
+| `show.explicit` | no | Defaults to `false`; serialized as `"true"`/`"false"` string |
+| `episodes[].file` | yes | Path to the rendered mp3 (relative to the config file) |
+| `episodes[].title` | yes | Episode `<title>` |
+| `episodes[].pubDate` | yes | ISO 8601 publication date (e.g. `"2026-06-01T00:00:00Z"`) |
+| `episodes[].guid` | yes | Stable, unique episode identifier |
+| `episodes[].description` | no | Episode `<description>` |
+| `episodes[].explicit` | no | Per-episode explicit flag |
+
+**`pubDate`-from-config invariant:** `pubDate` is **always derived from the config ISO 8601 string** via `new Date(pubDate).toUTCString()`. `Date.now()` is never called. The feed is reproducible given the same config and the same mp3 file on disk.
+
+**Enclosure URL derivation:** `enclosure url = show.baseUrl + path.basename(episode.file)`. The `baseUrl` is always normalized to end with `/` by `validateFeedConfig` so the concatenation never produces a malformed URL.
+
+**Exit codes:** config not found or malformed → exit 1 (naming the missing field); episode mp3 not found → exit 1; ffprobe failure → exit 3.
+
+All feed generation logic lives in `src/compiler/feed.ts`. The `buildFeedXml` function is pure — it takes validated config and pre-computed `EpisodeMeta[]` and returns the XML string with no I/O.
+
 ---
 
 ## 7. Authentication & Authorization

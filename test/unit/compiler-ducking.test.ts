@@ -3,11 +3,12 @@
 //              AC3 (dropout_transition=0), AC4 (bed volume pre-gain with reductionDb),
 //              AC5 (speech-v1 preset values), AC6 (preset from lookup table),
 //              AC11 (reductionDb field name consistent), no-bed path unchanged.
+// T4 update: E_MULTI_BED_UNSUPPORTED removed — multi-bed IRs no longer throw
+//            (see test/unit/compiler-multi-bed.test.ts for the T4 AC suite).
 
 import { describe, it, expect } from "vitest";
 import { compileIR } from "../../src/compiler/index.js";
 import { validateIR } from "../../src/ir/validate.js";
-import { SoundstageError } from "../../src/ir/errors.js";
 import type { IR } from "../../src/ir/phase-b.js";
 
 const SR = 48000;
@@ -355,16 +356,25 @@ describe("duckUnderTrackId assertion", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 4: E_MULTI_BED_UNSUPPORTED validation (user-facing error before compile)
+// T4: E_MULTI_BED_UNSUPPORTED removed — validateIR allows multiple beds
+// (Full multi-bed AC suite is in test/unit/compiler-multi-bed.test.ts)
 // ---------------------------------------------------------------------------
 
-describe("E_MULTI_BED_UNSUPPORTED: multi-bed guard in validateIR", () => {
+describe("multi-bed: validateIR no longer restricts ducking count (T4)", () => {
   function makeMultiBedIR(): IR {
     return baseIR({
       tracks: [{ trackId: "voice" }, { trackId: "bed-0" }, { trackId: "bed-1" }],
       clips: [
         {
           id: "c0",
+          sourceRef: { kind: "cache", path: "/cache/voice.wav", hash: "vv", voiceUnitId: 0 },
+          trackId: "voice",
+          startSample: 0,
+          durationSamples: SR,
+          gainDb: 0,
+        },
+        {
+          id: "c1",
           sourceRef: { kind: "file", path: "/music/a.wav" },
           trackId: "bed-0",
           startSample: 0,
@@ -372,7 +382,7 @@ describe("E_MULTI_BED_UNSUPPORTED: multi-bed guard in validateIR", () => {
           gainDb: 0,
         },
         {
-          id: "c1",
+          id: "c2",
           sourceRef: { kind: "file", path: "/music/b.wav" },
           trackId: "bed-1",
           startSample: 0,
@@ -387,28 +397,14 @@ describe("E_MULTI_BED_UNSUPPORTED: multi-bed guard in validateIR", () => {
     });
   }
 
-  it("validateIR throws SoundstageError E_MULTI_BED_UNSUPPORTED for 2 ducking entries", () => {
+  it("validateIR does NOT throw for 2 ducking entries (multi-bed now supported)", () => {
     const ir = makeMultiBedIR();
-    expect(() => validateIR(ir)).toThrow(SoundstageError);
-    try {
-      validateIR(ir);
-    } catch (e) {
-      expect(e).toBeInstanceOf(SoundstageError);
-      expect((e as SoundstageError).code).toBe("E_MULTI_BED_UNSUPPORTED");
-      expect((e as SoundstageError).message).toContain("bed-0");
-      expect((e as SoundstageError).message).toContain("bed-1");
-    }
+    expect(() => validateIR(ir)).not.toThrow();
   });
 
-  it("compileIR throws SoundstageError E_MULTI_BED_UNSUPPORTED for 2 ducking entries", () => {
+  it("compileIR does NOT throw for 2 ducking entries", () => {
     const ir = makeMultiBedIR();
-    expect(() => compileIR(ir, "/tmp/out.wav")).toThrow(SoundstageError);
-    try {
-      compileIR(ir, "/tmp/out.wav");
-    } catch (e) {
-      expect(e).toBeInstanceOf(SoundstageError);
-      expect((e as SoundstageError).code).toBe("E_MULTI_BED_UNSUPPORTED");
-    }
+    expect(() => compileIR(ir, "/tmp/out.wav")).not.toThrow();
   });
 
   it("validateIR passes for 0 ducking entries (no bed)", () => {

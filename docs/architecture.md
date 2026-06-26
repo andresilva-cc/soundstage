@@ -484,6 +484,34 @@ This is a **published npm package + a binary on the user's machine** — there i
 - **CDN:** n/a (no served assets in v0.1; docs site, if any, is static-hostable).
 - **Scaling path:** the package itself doesn't "scale" — it's a local tool. The relevant scaling axes are (a) **long episodes** → the filter-script-file + sample-domain design already handles graphs too large for argv; if a single monolithic ffmpeg graph becomes too large/slow, the next step is **segment-wise intermediate renders concatenated bit-exactly** (deferred, not needed for v0.1-scale episodes); (b) **synthesis throughput** → optional parallel synthesis across `<Voice>` nodes; (c) a future **hosted renderer** is an entirely separate service that would consume the same IR — the IR contract is what makes that possible without rewriting the spine.
 
+### 6.1 `--player` — waveform image + interactive HTML player
+
+The `--player` flag generates two additional output artifacts alongside `episode.wav` and `episode.mp3`:
+
+```sh
+npx soundstage render episode.tsx --final --player
+# → episode.wav      (byte-identical WAV master)
+# → episode.mp3      (navigable chapters)
+# → waveform.png     (waveform image, 1200×120 px)
+# → episode-player.html  (self-contained interactive chapter player)
+```
+
+**`waveform.png`** — rendered from the final mp3 (post-loudnorm) via ffmpeg's `showwavespic` filter:
+
+```
+ffmpeg -i episode.mp3 -lavfi "showwavespic=s=1200x120:colors=steelblue:filter=peak" -frames:v 1 waveform.png -y
+```
+
+**`<stem>-player.html`** — a single self-contained HTML file with:
+- `<audio src="episode.mp3" controls>` — references the mp3 by relative filename (not embedded).
+- Waveform PNG embedded as `data:image/png;base64,…` (small enough to inline).
+- One `<button>` per `ir.chapters[]` entry; each button's `onclick` sets `currentTime` to `chapter.startSample / ir.sampleRate` (computed at generation time and embedded as a literal float — no client-side division).
+- `timeupdate` listener highlights the active chapter button via `aria-current="true"`.
+- Episode `title` and `author` in `<title>` and a heading.
+- **No external dependencies** — all CSS and JS are inlined; no `<script src>` or `<link href>` to external URLs.
+
+All `--player` logic lives in `src/compiler/player.ts`. If `generateWaveform` fails (e.g. ffmpeg not found), the CLI surfaces the error to stderr and exits with code 3 (ffmpeg error path).
+
 ---
 
 ## 7. Authentication & Authorization

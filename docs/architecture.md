@@ -249,12 +249,26 @@ interface SynthResult {
 }
 ```
 
-**v0.1 adapters**
+**Available adapters**
 
-- **Kokoro** (`id:"kokoro"`, default) — lazy `import('kokoro-js')`, `dtype:"q8"`, returns 24kHz mono f32. `canonicalSettings` = `{ voice, speed }`.
+- **Kokoro** (`id:"kokoro"`, default for `--final`) — lazy `import('kokoro-js')`, `dtype:"q8"`, returns 24kHz mono f32. `canonicalSettings` = `{ speed }`. Keyless, local, no API cost.
+- **OpenAI** (`id:"openai"`, `--provider openai`) — native `fetch` to `POST /v1/audio/speech`, `response_format:"pcm"`, returns raw int16 PCM at 24kHz, 1 ch, converted to f32 on receipt. Model is a constructor parameter (default `"tts-1"`; `"tts-1-hd"` also supported — model is part of the cache key, so the two produce independent entries). `canonicalSettings` = `{ speed }`. API key from `OPENAI_API_KEY` env var at synth() call time. No SDK peer dep — single REST endpoint. Retries on HTTP 429/5xx via the shared `withRetry` utility (`src/adapters/cloud/retry.ts`).
 - **Synthetic** (`id:"synthetic"`, test fixture) — text → deterministic tone whose frequency/duration are derived from a hash of the text (so different text → different, stable audio), returned with a real sample count. Used by CI and golden tests; **needs no model and no network**.
 
-**Cloud extensibility (not built in v0.1, but the seam supports it):** an OpenAI/ElevenLabs adapter is added by implementing `TtsAdapter` and registering it under a `provider` id. The IR, compiler, and cache are untouched. Provider quirks (char limits, sentence chunking, ElevenLabs request-stitching, OpenAI `instructions`) live entirely inside the adapter and must be folded into `canonicalSettings` so the cache key stays correct. The same interface generalizes to future **music-gen** adapters (a `<MusicBed generate="…">` would route to a generator adapter with the identical key/cache machinery).
+**Adapter selection (CLI `--provider` flag):**
+
+```
+--draft                       → synthetic adapter (ignores --provider; warns if set)
+--final                       → kokoro (default, backward-compat)
+--final --provider kokoro     → kokoro (explicit)
+--final --provider openai     → OpenAI TTS (requires OPENAI_API_KEY)
+--final --provider elevenlabs → ElevenLabs TTS (coming soon; requires ELEVENLABS_API_KEY)
+```
+
+Error codes:
+- `E_ADAPTER_MISSING_KEY` (exit 2) — required API key env var is absent at synth() call time.
+
+**Cloud extensibility:** adding a new cloud TTS provider requires only implementing `TtsAdapter` and registering it in `selectAdapter()`. The IR, compiler, and cache are untouched. Provider quirks (char limits, sentence chunking, request-stitching) live entirely inside the adapter and must be folded into `canonicalSettings` so the cache key stays correct.
 
 ### 4.5 Content-hash cache (the durable mechanism)
 

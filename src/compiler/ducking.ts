@@ -59,6 +59,8 @@ export interface BedBuildContext {
   masterRate: number;
   /** Universal conditioning string (aresample + aformat). */
   condition: string;
+  /** Output channel count (from ir.channels). When 2, buildBedTrack applies a stereo pan filter. */
+  channels: 1 | 2;
   /** assertFiniteNumber from caller — reused, not re-declared. */
   assertFinite: (v: unknown, label: string) => number;
 }
@@ -143,6 +145,19 @@ function buildBedTrack(
     }
   }
 
+  // Stereo pan: applied AFTER fades, before delay. Same constant-power law as voice clips.
+  // Default pan is 0.0 (center) when clip.pan is absent.
+  if (ctx.channels === 2) {
+    const pan = clip.pan ?? 0.0;
+    ctx.assertFinite(pan, `bed clip ${clip.id} pan`);
+    const theta = ((1 + pan) / 2) * (Math.PI / 2);
+    const L = Math.cos(theta).toFixed(6);
+    const R = Math.sin(theta).toFixed(6);
+    const pl = label("b");
+    lines.push(`${cur} pan=stereo|c0=${L}*c0|c1=${R}*c0 ${pl}`);
+    cur = pl;
+  }
+
   // Delay bed to its absolute timeline position (usually 0 for voice-bed)
   if (clip.startSample > 0) {
     assertFinite(clip.startSample, `bed clip ${clip.id} startSample`);
@@ -200,8 +215,19 @@ export function buildDuckingTopology(
 
   // --- asplit voice lane → one copy for mix, one copy to key the compressor ---
   const vcMix = label("vc");
-  const vcKey = label("vc");
-  lines.push(`${voiceLaneLabel} asplit=2 ${vcMix}${vcKey}`);
+  const vcKeyRaw = label("vc");
+  lines.push(`${voiceLaneLabel} asplit=2 ${vcMix}${vcKeyRaw}`);
+
+  // In stereo mode the voice key is panned, so sidechaincompress would reduce each
+  // bed channel by that channel's key level only — a voice panned hard-left barely
+  // ducks the bed's right channel. Fix: mono-sum the key and broadcast to both
+  // channels before sidechaincompress so ducking depth is pan-independent.
+  let vcKey = vcKeyRaw;
+  if (ctx.channels === 2) {
+    const vcKeyMono = label("vc");
+    lines.push(`${vcKeyRaw} pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1 ${vcKeyMono}`);
+    vcKey = vcKeyMono;
+  }
 
   // --- sidechaincompress: bed input, voice key ---
   const bedDucked = label("bd");

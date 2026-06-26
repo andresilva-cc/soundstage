@@ -154,12 +154,13 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
   // Build CacheLayer.
   const cache = new CacheLayer(adapter, cacheDirPath, { noCache });
 
-  // Tracking for cache report.
-  const hitVoiceUnitIds = new Set<number>();
-  let totalVoices = 0;
-  function onVoiceSynthesized(voiceUnitId: number, hit: boolean): void {
-    totalVoices = Math.max(totalVoices, voiceUnitId + 1);
-    if (hit) hitVoiceUnitIds.add(voiceUnitId);
+  // Tracking for cache report (T7: per-chunk stats).
+  const chunkStats = new Map<number, { total: number; hits: number }>();
+  function onVoiceSynthesized(voiceUnitId: number, _chunkIndex: number, _chunkTotal: number, hit: boolean): void {
+    const stats = chunkStats.get(voiceUnitId) ?? { total: 0, hits: 0 };
+    stats.total++;
+    if (hit) stats.hits++;
+    chunkStats.set(voiceUnitId, stats);
   }
 
   // 1. Load .tsx → element tree.
@@ -272,7 +273,7 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
   }
 
   // 10. Print cache report.
-  const report = buildCacheReport(ir, hitVoiceUnitIds, totalVoices);
+  const report = buildCacheReport(ir, chunkStats);
   process.stdout.write("soundstage: cache report\n");
   process.stdout.write(formatCacheReport(report) + "\n");
 

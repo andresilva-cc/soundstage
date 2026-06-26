@@ -60,11 +60,12 @@ async function renderFixture(
   const adapter = new SyntheticAdapter();
   const cache = new CacheLayer(adapter, cacheDirPath, { noCache: false });
 
-  const hitVoiceUnitIds = new Set<number>();
-  let totalVoices = 0;
-  function onVoiceSynthesized(voiceUnitId: number, hit: boolean): void {
-    totalVoices = Math.max(totalVoices, voiceUnitId + 1);
-    if (hit) hitVoiceUnitIds.add(voiceUnitId);
+  const chunkStats = new Map<number, { total: number; hits: number }>();
+  function onVoiceSynthesized(voiceUnitId: number, _chunkIndex: number, _chunkTotal: number, hit: boolean): void {
+    const stats = chunkStats.get(voiceUnitId) ?? { total: 0, hits: 0 };
+    stats.total++;
+    if (hit) stats.hits++;
+    chunkStats.set(voiceUnitId, stats);
   }
 
   const tree = await loadTsx(absFile);
@@ -93,7 +94,7 @@ async function renderFixture(
     await rm(tmpRenderDir, { recursive: true, force: true });
   }
 
-  const report = buildCacheReport(ir, hitVoiceUnitIds, totalVoices);
+  const report = buildCacheReport(ir, chunkStats);
   const stdout =
     "soundstage: cache report\n" + formatCacheReport(report) + "\n" +
     `soundstage: render complete → ${stem}.wav, ${stem}.mp3\n`;

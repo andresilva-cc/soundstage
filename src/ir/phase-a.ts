@@ -1,7 +1,8 @@
 // Phase A — Resolve & Synthesize.
 // §3.1: Walk the inheritance-resolved element tree; for each Voice node, call CacheLayer.get()
-// (synthesizes on miss, hits on warm); for each Clip/MusicBed src, probe the real duration
-// via ffprobe. Produce a resolved tree where every leaf has sourceRef + durationSamples.
+// sequentially for each sentence chunk (§T7 auto segmentation), then ffprobe each Clip/MusicBed src.
+// Produce a resolved tree where every Voice leaf has voiceUnitId + chunks[], and every
+// Clip/MusicBed leaf has sourceRef + durationSamples.
 //
 // Phase A is the ONLY phase that touches TTS, cache, and ffprobe. Its output is a pure
 // value that Phase B can lower without any I/O.
@@ -14,6 +15,7 @@ import type { SynthRequest } from "../adapters/types.js";
 import type { CacheLayer, CacheResult } from "../adapters/cache/index.js";
 import { probeFileDuration } from "../probe/index.js";
 import { validateTree } from "./validate.js";
+import { segment } from "./segmentor.js";
 
 export interface SourceRefCache {
   kind: "cache";
@@ -30,11 +32,27 @@ export interface SourceRefFile {
 
 export type SourceRef = SourceRefCache | SourceRefFile;
 
+/**
+ * Per-chunk synthesis result stored in the resolved Voice node's `chunks` prop.
+ * `durationSamples` is at the master sample rate (already converted from native TTS rate).
+ * `sampleRate` is the native TTS sample rate the adapter returned audio at.
+ */
+export interface ChunkResult {
+  wavPath: string;
+  durationSamples: number; // at master (episode) sample rate
+  sampleRate: number;      // native TTS adapter sample rate
+  hash: string;
+  hit: boolean;
+}
+
 export interface PhaseAOptions {
   cache: CacheLayer;
   baseDir: string;
-  /** Called after each Voice node is synthesized (or served from cache). */
-  onVoiceSynthesized?: (voiceUnitId: number, hit: boolean) => void;
+  /**
+   * Called after each chunk of each Voice node is synthesized (or served from cache).
+   * Signature changed in T7: now includes chunkIndex and chunkTotal per Voice.
+   */
+  onVoiceSynthesized?: (voiceUnitId: number, chunkIndex: number, chunkTotal: number, hit: boolean) => void;
 }
 
 /**
@@ -51,7 +69,7 @@ async function resolveNode(
 ): Promise<SoundstageElement> {
   const typeName = typeof node.type === "string" ? node.type : undefined;
 
-  // Voice node: synthesize via CacheLayer
+  // Voice node: segment text → synthesize each chunk sequentially via CacheLayer
   if (typeName === COMPONENT_NAMES.Voice) {
     const voice = node.props["voice"] as string;
     const speed = node.props["speed"] as number | undefined;
@@ -70,39 +88,52 @@ async function resolveNode(
       .filter((c): c is string => typeof c === "string")
       .join("");
 
-    const req: SynthRequest = {
-      text,
-      voice,
-      sampleRate: episodeSampleRate,
-      ...(speed !== undefined ? { speed } : {}),
-    };
-
-    const result: CacheResult = await options.cache.get(req);
+    // Assign voiceUnitId before processing chunks
     const voiceUnitId = voiceCounter.value++;
-    options.onVoiceSynthesized?.(voiceUnitId, result.hit);
 
-    const sourceRef: SourceRefCache = {
-      kind: "cache",
-      path: result.wavPath,
-      hash: result.hash,
-      voiceUnitId,
-    };
+    // Segment text into sentence-granular chunks (§T7)
+    const chunks = segment(text);
+    const chunkTotal = chunks.length;
+    const chunkResults: ChunkResult[] = [];
 
-    // Convert native TTS sample rate → master sample rate (§3.2: all IR positions
-    // are at the master rate). The cache sidecar stores samples at the adapter's
-    // native rate (e.g. 24000 Hz for Kokoro/synthetic); the compiler resamples on
-    // read, so the IR must express durations at episodeSampleRate.
-    const durationAtMasterRate =
-      result.sampleRate === episodeSampleRate
-        ? result.durationSamples
-        : Math.round(result.durationSamples * episodeSampleRate / result.sampleRate);
+    for (let chunkIndex = 0; chunkIndex < chunkTotal; chunkIndex++) {
+      const chunkText = chunks[chunkIndex]!;
+
+      const req: SynthRequest = {
+        text: chunkText,
+        voice,
+        sampleRate: episodeSampleRate,
+        ...(speed !== undefined ? { speed } : {}),
+      };
+
+      const result: CacheResult = await options.cache.get(req);
+
+      // Convert native TTS sample rate → master sample rate (§3.2: all IR positions
+      // are at the master rate). The cache sidecar stores samples at the adapter's
+      // native rate (e.g. 24000 Hz for Kokoro/synthetic); the compiler resamples on
+      // read, so the IR must express durations at episodeSampleRate.
+      const durationAtMasterRate =
+        result.sampleRate === episodeSampleRate
+          ? result.durationSamples
+          : Math.round(result.durationSamples * episodeSampleRate / result.sampleRate);
+
+      chunkResults.push({
+        wavPath: result.wavPath,
+        durationSamples: durationAtMasterRate,
+        sampleRate: result.sampleRate,
+        hash: result.hash,
+        hit: result.hit,
+      });
+
+      options.onVoiceSynthesized?.(voiceUnitId, chunkIndex, chunkTotal, result.hit);
+    }
 
     return {
       type: node.type,
       props: {
         ...node.props,
-        sourceRef,
-        durationSamples: durationAtMasterRate,
+        voiceUnitId,
+        chunks: chunkResults,
       },
       children: node.children,
     };
@@ -188,9 +219,10 @@ async function resolveChildren(
 }
 
 /**
- * Phase A: validate + resolve inheritance, then synthesize all Voice nodes and
- * probe all Clip/MusicBed src files. Returns a resolved tree where every leaf
- * has sourceRef and durationSamples.
+ * Phase A: validate + resolve inheritance, then synthesize all Voice nodes (with
+ * per-sentence chunk segmentation per §T7) and probe all Clip/MusicBed src files.
+ * Returns a resolved tree where every Voice leaf has `voiceUnitId + chunks[]`
+ * and every Clip/MusicBed leaf has `sourceRef + durationSamples`.
  *
  * validateTree() is the sole entry point — do NOT call resolveInheritance separately.
  * Throws SoundstageError on validation errors (before any synthesis).

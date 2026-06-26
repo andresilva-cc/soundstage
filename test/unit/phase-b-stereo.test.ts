@@ -41,8 +41,8 @@ function voiceNode(
     type: "Voice",
     props: {
       voice: "host",
-      sourceRef: { kind: "cache", path: `.soundstage/cache/${hash}.wav`, hash, voiceUnitId },
-      durationSamples,
+      voiceUnitId,
+      chunks: [{ wavPath: `.soundstage/cache/${hash}.wav`, hash, durationSamples, sampleRate: 48000, hit: false }],
       ...(pan !== undefined ? { pan } : {}),
     },
     children: ["some text"],
@@ -81,14 +81,14 @@ function musicBedNode(children: SoundstageElement[], pan?: number): SoundstageEl
 // ---------------------------------------------------------------------------
 
 describe("SCHEMA_VERSION", () => {
-  it("SCHEMA_VERSION === 3", () => {
-    expect(SCHEMA_VERSION).toBe(3);
+  it("SCHEMA_VERSION === 4", () => {
+    expect(SCHEMA_VERSION).toBe(4);
   });
 
-  it("phaseB produces schemaVersion 3", () => {
+  it("phaseB produces schemaVersion 4", () => {
     const tree = episode([voiceNode(SR)]);
     const ir = phaseB(tree);
-    expect(ir.schemaVersion).toBe(3);
+    expect(ir.schemaVersion).toBe(4);
   });
 });
 

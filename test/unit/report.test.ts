@@ -1,5 +1,6 @@
 // Unit tests for cache report aggregation (src/cli/report.ts).
 // Uses fabricated IR + hit/miss data — no ffmpeg, no filesystem.
+// T7: buildCacheReport now takes Map<number, {total, hits}> (chunk stats) instead of Set + count.
 
 import { describe, it, expect } from "vitest";
 import { buildCacheReport, formatCacheReport } from "../../src/cli/report.js";
@@ -12,9 +13,9 @@ import type { IR, ClipIR } from "../../src/ir/phase-b.js";
 /** Build a minimal IR with chapters and voice-lane clips keyed by voiceUnitId. */
 function makeIR(
   chapters: Array<{ title: string; startSample: number; endSample: number }>,
-  voiceCips: Array<{ voiceUnitId: number; startSample: number }>,
+  voiceClips: Array<{ voiceUnitId: number; startSample: number }>,
 ): IR {
-  const clips: ClipIR[] = voiceCips.map((v, i) => ({
+  const clips: ClipIR[] = voiceClips.map((v, i) => ({
     id: `c${i}`,
     sourceRef: { kind: "cache", path: `/cache/${v.voiceUnitId}.wav`, voiceUnitId: v.voiceUnitId },
     trackId: "voice",
@@ -24,7 +25,7 @@ function makeIR(
   }));
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 4,
     sampleRate: 48000,
     channels: 1,
     episode: { title: "Test" },
@@ -41,8 +42,17 @@ function makeIR(
   };
 }
 
+/** Build a Map<voiceUnitId, {total, hits}> from simple arrays (1 chunk per voice, hit or miss). */
+function statsFrom(voiceUnitIds: number[], hitIds: Set<number>): Map<number, { total: number; hits: number }> {
+  const m = new Map<number, { total: number; hits: number }>();
+  for (const id of voiceUnitIds) {
+    m.set(id, { total: 1, hits: hitIds.has(id) ? 1 : 0 });
+  }
+  return m;
+}
+
 // ---------------------------------------------------------------------------
-// Tests: buildCacheReport
+// Tests: buildCacheReport (new Map<number, {total, hits}> API)
 // ---------------------------------------------------------------------------
 
 describe("buildCacheReport", () => {
@@ -57,9 +67,9 @@ describe("buildCacheReport", () => {
         { voiceUnitId: 1, startSample: 5000 },
       ],
     );
-    const hitSet = new Set([0, 1]);
+    const stats = statsFrom([0, 1], new Set([0, 1]));
 
-    const report = buildCacheReport(ir, hitSet, 2);
+    const report = buildCacheReport(ir, stats);
 
     expect(report.totalCached).toBe(2);
     expect(report.totalReSynth).toBe(0);
@@ -81,9 +91,9 @@ describe("buildCacheReport", () => {
         { voiceUnitId: 3, startSample: 15000 },
       ],
     );
-    const hitSet = new Set<number>();
+    const stats = statsFrom([0, 1, 2, 3], new Set());
 
-    const report = buildCacheReport(ir, hitSet, 4);
+    const report = buildCacheReport(ir, stats);
 
     expect(report.totalCached).toBe(0);
     expect(report.totalReSynth).toBe(4);
@@ -106,9 +116,9 @@ describe("buildCacheReport", () => {
         { voiceUnitId: 4, startSample: 20000 },// Outro
       ],
     );
-    const hitSet = new Set([0, 2, 3, 4]); // voice 1 is a miss
+    const stats = statsFrom([0, 1, 2, 3, 4], new Set([0, 2, 3, 4])); // voice 1 is a miss
 
-    const report = buildCacheReport(ir, hitSet, 5);
+    const report = buildCacheReport(ir, stats);
 
     expect(report.segments[0]).toEqual({ title: "Intro", cached: 1, reSynth: 0 });
     expect(report.segments[1]).toEqual({ title: "Topic 2", cached: 2, reSynth: 1 });
@@ -119,9 +129,9 @@ describe("buildCacheReport", () => {
 
   it("no chapters — all voices in Uncategorized", () => {
     const ir = makeIR([], [{ voiceUnitId: 0, startSample: 0 }]);
-    const hitSet = new Set<number>([0]);
+    const stats = statsFrom([0], new Set([0]));
 
-    const report = buildCacheReport(ir, hitSet, 1);
+    const report = buildCacheReport(ir, stats);
 
     expect(report.segments).toHaveLength(1);
     expect(report.segments[0]).toEqual({ title: "Uncategorized", cached: 1, reSynth: 0 });
@@ -134,9 +144,9 @@ describe("buildCacheReport", () => {
       [{ title: "Intro", startSample: 0, endSample: 5000 }],
       [],
     );
-    const hitSet = new Set<number>();
+    const stats = new Map<number, { total: number; hits: number }>();
 
-    const report = buildCacheReport(ir, hitSet, 0);
+    const report = buildCacheReport(ir, stats);
 
     expect(report.totalCached).toBe(0);
     expect(report.totalReSynth).toBe(0);
@@ -151,7 +161,6 @@ describe("buildCacheReport", () => {
     // Layout:
     //   Chapter "Intro":  [0, 100000) — voice at sample 0
     //   Chapter "Main":   [76000, 184000) — voice at sample 76000 (overlap zone: 76000–100000)
-    //   Overlap zone: 76000–100000 → voice at 76000 is in BOTH chapters
     //   latest-start-wins: Main.startSample(76000) > Intro.startSample(0) → Main wins
     const ir = makeIR(
       [
@@ -159,14 +168,14 @@ describe("buildCacheReport", () => {
         { title: "Main", startSample: 76000, endSample: 184000 },
       ],
       [
-        { voiceUnitId: 0, startSample: 0 },    // clearly in Intro only
+        { voiceUnitId: 0, startSample: 0 },     // clearly in Intro only
         { voiceUnitId: 1, startSample: 76000 }, // overlap zone → should go to Main
         { voiceUnitId: 2, startSample: 124000 }, // clearly in Main only
       ],
     );
-    const hitSet = new Set([0, 1, 2]);
+    const stats = statsFrom([0, 1, 2], new Set([0, 1, 2]));
 
-    const report = buildCacheReport(ir, hitSet, 3);
+    const report = buildCacheReport(ir, stats);
 
     expect(report.segments).toHaveLength(2);
     // voice 0 → Intro (only Intro contains sample 0)
@@ -176,14 +185,33 @@ describe("buildCacheReport", () => {
     expect(report.totalCached).toBe(3);
     expect(report.totalReSynth).toBe(0);
   });
+
+  it("multi-chunk voice: voice0 has 3 chunks (2 hits, 1 miss)", () => {
+    // voice0 appears as 3 clips in IR (same voiceUnitId=0), all in Intro
+    const ir = makeIR(
+      [{ title: "Intro", startSample: 0, endSample: 30000 }],
+      [
+        { voiceUnitId: 0, startSample: 0 },
+        { voiceUnitId: 0, startSample: 10000 },
+        { voiceUnitId: 0, startSample: 20000 },
+      ],
+    );
+    const stats = new Map([[0, { total: 3, hits: 2 }]]);
+
+    const report = buildCacheReport(ir, stats);
+
+    expect(report.segments[0]).toEqual({ title: "Intro", cached: 2, reSynth: 1 });
+    expect(report.totalCached).toBe(2);
+    expect(report.totalReSynth).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Tests: formatCacheReport
+// Tests: formatCacheReport (new "chunks cached" format)
 // ---------------------------------------------------------------------------
 
 describe("formatCacheReport", () => {
-  it("all cached — shows N/N cached per segment", () => {
+  it("all cached — shows N/N chunks cached per segment", () => {
     const report = {
       segments: [
         { title: "Intro", cached: 2, reSynth: 0 },
@@ -194,12 +222,12 @@ describe("formatCacheReport", () => {
     };
 
     const text = formatCacheReport(report);
-    expect(text).toContain("Intro: 2/2 cached");
-    expect(text).toContain("Outro: 1/1 cached");
-    expect(text).toContain("total: 3/3 cached, 0 re-synth");
+    expect(text).toContain("Intro: 2/2 chunks cached");
+    expect(text).toContain("Outro: 1/1 chunks cached");
+    expect(text).toContain("total: 3/3 chunks cached");
   });
 
-  it("partial re-synth — shows re-synth/total re-synth · cached", () => {
+  it("partial re-synth — shows cached/total chunks cached", () => {
     const report = {
       segments: [
         { title: "Topic 2", cached: 2, reSynth: 1 },
@@ -209,11 +237,11 @@ describe("formatCacheReport", () => {
     };
 
     const text = formatCacheReport(report);
-    expect(text).toContain("Topic 2: 1/3 re-synth · 2 cached");
-    expect(text).toContain("total: 2/3 cached, 1 re-synth");
+    expect(text).toContain("Topic 2: 2/3 chunks cached");
+    expect(text).toContain("total: 2/3 chunks cached");
   });
 
-  it("all re-synth — shows N/N re-synth", () => {
+  it("all re-synth — shows 0/N chunks cached", () => {
     const report = {
       segments: [
         { title: "Cold Start", cached: 0, reSynth: 3 },
@@ -223,8 +251,8 @@ describe("formatCacheReport", () => {
     };
 
     const text = formatCacheReport(report);
-    expect(text).toContain("Cold Start: 3/3 re-synth");
-    expect(text).toContain("total: 0/3 cached, 3 re-synth");
+    expect(text).toContain("Cold Start: 0/3 chunks cached");
+    expect(text).toContain("total: 0/3 chunks cached");
   });
 
   it("no voices — shows (no voice units)", () => {
@@ -236,5 +264,16 @@ describe("formatCacheReport", () => {
 
     const text = formatCacheReport(report);
     expect(text).toContain("(no voice units)");
+  });
+
+  it("example from spec: Intro 5/7 chunks cached", () => {
+    const report = {
+      segments: [{ title: "Intro", cached: 5, reSynth: 2 }],
+      totalCached: 5,
+      totalReSynth: 2,
+    };
+
+    const text = formatCacheReport(report);
+    expect(text).toContain("Intro: 5/7 chunks cached");
   });
 });

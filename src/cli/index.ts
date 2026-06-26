@@ -3,6 +3,7 @@
 // §6: npx soundstage render <file.tsx> [--out <dir>] [--no-cache] [--draft|--final]
 
 import { Command } from "commander";
+import { fileURLToPath } from "node:url";
 import { dirname, resolve, basename, extname, join } from "node:path";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +12,8 @@ import { phaseA } from "../ir/phase-a.js";
 import { phaseB } from "../ir/phase-b.js";
 import { SoundstageError } from "../ir/errors.js";
 import { CacheLayer } from "../adapters/cache/index.js";
-import { SyntheticAdapter } from "../adapters/synthetic/index.js";
+import { selectAdapter } from "./select-adapter.js";
+import type { AdapterMode } from "./select-adapter.js";
 import { compileIR } from "../compiler/index.js";
 import { runFfmpeg, getFfmpegVersion } from "../compiler/run.js";
 import { applyLoudnorm } from "../compiler/loudnorm.js";
@@ -30,22 +32,6 @@ const EXIT_FFMPEG_ERROR = 3;
 // ---------------------------------------------------------------------------
 // Adapter selection
 // ---------------------------------------------------------------------------
-
-/** Adapter mode: synthetic (--draft) or Kokoro (--final / default). */
-type AdapterMode = "draft" | "final";
-
-function selectAdapter(mode: AdapterMode) {
-  if (mode === "draft") {
-    return new SyntheticAdapter();
-  }
-
-  // "final" → Kokoro (lazy-loaded; throws a clear error if kokoro-js not installed).
-  // Import KokoroAdapter lazily so that --draft/synthetic paths never load the module.
-  // The adapter itself lazy-loads kokoro-js on first synth() — we just need the class.
-  return import("../adapters/kokoro/index.js").then(
-    ({ KokoroAdapter }) => new KokoroAdapter(),
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Cache dir
@@ -76,7 +62,7 @@ const USER_ERROR_CODES = new Set([
 ]);
 
 // Error codes that map to adapter/synthesis errors (exit 2).
-const ADAPTER_ERROR_CODES = new Set<string>([]);
+const ADAPTER_ERROR_CODES = new Set<string>(["E_ADAPTER_MISSING_KEY", "E_ADAPTER_REQUEST_FAILED"]);
 
 // Error codes that map to ffmpeg/ffprobe errors (exit 3).
 const FFMPEG_ERROR_CODES = new Set<string>([]);
@@ -141,6 +127,7 @@ interface RenderOptions {
   cache: boolean;   // commander's --no-cache sets this to false
   draft: boolean;
   final: boolean;
+  provider?: string; // --provider <kokoro|openai|elevenlabs>; only meaningful with --final
 }
 
 async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
@@ -150,21 +137,12 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
   const outDir = opts.out !== undefined ? resolve(opts.out) : baseDir;
   const noCache = !opts.cache;
 
-  // Determine adapter mode: --draft = synthetic, --final = Kokoro, default = Kokoro.
+  // Determine adapter mode: --draft = synthetic, --final = real TTS, default = real TTS.
   const mode: AdapterMode = opts.draft ? "draft" : "final";
+  const provider = opts.provider ?? null;
 
-  // Select adapter (may be a Promise for Kokoro).
-  const adapterRaw = selectAdapter(mode);
-  const adapter =
-    adapterRaw instanceof Promise
-      ? await adapterRaw.catch((err: unknown) => {
-          handleError(err);
-        })
-      : adapterRaw;
-  if (adapter === undefined) {
-    // handleError already exited; this is unreachable but satisfies TypeScript.
-    process.exit(EXIT_ADAPTER_ERROR);
-  }
+  // Select adapter. selectAdapter emits a warning if draft + provider is set.
+  const adapter = await selectAdapter(mode, provider).catch(handleError);
 
   // Ensure cache dir exists.
   const cacheDirPath = cacheDir(baseDir);
@@ -301,7 +279,11 @@ program
   .option("--out <dir>", "Output directory (default: same as source file)")
   .option("--no-cache", "Bypass cache reads (always re-synth; still writes entries)")
   .option("--draft", "Use the synthetic adapter (fast, no model download)")
-  .option("--final", "Use the Kokoro adapter (real voice; requires kokoro-js)")
+  .option("--final", "Use a real TTS adapter (default provider: kokoro)")
+  .option(
+    "--provider <name>",
+    "TTS provider for --final renders: kokoro (default), openai, elevenlabs",
+  )
   .action(async (file: string, opts: RenderOptions) => {
     // Validate flag combinations.
     if (opts.draft && opts.final) {
@@ -316,4 +298,7 @@ program
     }
   });
 
-program.parse(process.argv);
+// Only parse when this module is the CLI entry point (not when imported in tests or as a library).
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  program.parse(process.argv);
+}

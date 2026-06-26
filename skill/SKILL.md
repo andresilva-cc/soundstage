@@ -152,12 +152,29 @@ export default (
 
 ---
 
+### 4. Cloud TTS provider (OpenAI)
+
+```sh
+export OPENAI_API_KEY=sk-...
+npx soundstage render episode.tsx --final --provider openai
+```
+
+- `--provider openai` selects the OpenAI TTS adapter instead of the default (Kokoro).
+- API key is read from `OPENAI_API_KEY` at render time — never pass it as a flag.
+- The default OpenAI model is `tts-1`. For higher quality: use the `model` constructor option (library usage only — CLI always uses `tts-1`).
+- Voice prop value is the OpenAI voice name: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`.
+- ElevenLabs: `--provider elevenlabs` with `ELEVENLABS_API_KEY`; voice prop is the voice UUID.
+- `--draft --provider openai` is silently ignored (synthetic adapter always wins with `--draft`).
+
+---
+
 ## Cost guidance
 
 | Mode | Command | When |
 |---|---|---|
 | **Draft** (synthetic tones, free, instant) | `--draft` | Development, CI, layout testing |
 | **Final** (real Kokoro voice, local, free) | `--final` | Production render, no API cost |
+| **Final, cloud TTS** (OpenAI / ElevenLabs) | `--final --provider openai` | When Kokoro voice quality isn't sufficient |
 
 **Cache economics:** Edit one `<Voice>` → only that segment re-synthesizes. The cache report after each run shows exactly which segments were cached vs. re-synthesized:
 
@@ -180,6 +197,7 @@ A typical 3-segment episode: ~$0.00 per re-render after the first run (Kokoro is
 | `E_MISSING_PROP: voice` | `<Voice>` has no `voice` prop and none is inherited from `<Segment>`/`<Episode>` | Add `voice="af_heart"` to the `<Voice>` or inherit from parent |
 | `E_SRC_NOT_FOUND` | `<MusicBed src="...">` path doesn't exist | Use a path relative to the `.tsx` file; run from the project root |
 | `E_MULTI_BED_UNSUPPORTED` | More than one `<MusicBed>` at the same level | v0.1 supports one music bed per episode; nest content inside it |
+| `E_ADAPTER_MISSING_KEY` | Cloud TTS API key not set | `export OPENAI_API_KEY=sk-...` or `export ELEVENLABS_API_KEY=...` before rendering |
 | Mix step fails (ffmpeg error) | Missing `ffmpeg`/`ffprobe` on PATH | Install ffmpeg v8.x: `brew install ffmpeg` / `apt install ffmpeg` |
 | Kokoro model not found | First run downloads ~86 MB model | Wait for download; subsequent runs use the cached model |
 

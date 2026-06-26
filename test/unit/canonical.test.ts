@@ -126,6 +126,20 @@ describe("canonicalJSON — text normalization (for string values)", () => {
   });
 });
 
+describe("canonicalJSON — large number guard (1e21 exponential-notation boundary)", () => {
+  it("throws TypeError on 1e21 (would serialize as '1e+21' in JSON.stringify)", () => {
+    expect(() => canonicalJSON({ x: 1e21 })).toThrow(TypeError);
+  });
+
+  it("throws TypeError on -1e21", () => {
+    expect(() => canonicalJSON({ x: -1e21 })).toThrow(TypeError);
+  });
+
+  it("does not throw for 9.99e20 (just below the boundary)", () => {
+    expect(() => canonicalJSON({ x: 9.99e20 })).not.toThrow();
+  });
+});
+
 describe("canonicalJSON — types", () => {
   it("string values are quoted", () => {
     expect(canonicalJSON({ a: "hello" })).toBe('{"a":"hello"}');

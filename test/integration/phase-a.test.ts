@@ -106,11 +106,11 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// AC 1: Two Voice nodes → both get sourceRef.kind === "cache" + durationSamples > 0
+// AC 1: Two Voice nodes → both get chunks[] with kind=cache + durationSamples > 0 (T7)
 // ---------------------------------------------------------------------------
 
-describe("AC1 — two Voice nodes get cache sourceRefs + durationSamples", () => {
-  it("resolves two Voice nodes with kind=cache and durationSamples > 0", async () => {
+describe("AC1 — two Voice nodes get chunks[] with cache entries (T7)", () => {
+  it("resolves two Voice nodes with chunks[].wavPath and durationSamples > 0", async () => {
     const tree = makeEpisode([
       makeVoice("Hello world", "host"),
       makeVoice("Goodbye world", "host"),
@@ -126,11 +126,16 @@ describe("AC1 — two Voice nodes get cache sourceRefs + durationSamples", () =>
 
     for (const child of children) {
       expect(child.type).toBe("Voice");
-      const sourceRef = child.props["sourceRef"] as { kind: string; path: string; hash: string };
-      expect(sourceRef.kind).toBe("cache");
-      expect(typeof sourceRef.path).toBe("string");
-      expect(typeof sourceRef.hash).toBe("string");
-      expect(child.props["durationSamples"]).toBeGreaterThan(0);
+      // T7: props now carry voiceUnitId + chunks[] (not sourceRef/durationSamples)
+      expect(typeof child.props["voiceUnitId"]).toBe("number");
+      const chunks = child.props["chunks"] as Array<{ wavPath: string; hash: string; durationSamples: number }>;
+      expect(Array.isArray(chunks)).toBe(true);
+      expect(chunks.length).toBeGreaterThanOrEqual(1);
+      for (const chunk of chunks) {
+        expect(typeof chunk.wavPath).toBe("string");
+        expect(typeof chunk.hash).toBe("string");
+        expect(chunk.durationSamples).toBeGreaterThan(0);
+      }
     }
   });
 });
@@ -342,7 +347,7 @@ describe("AC6 — validation before synthesis", () => {
     synthSpy.mockRestore();
   });
 
-  it("hash on resolved Voice node matches /^[0-9a-f]{64}$/", async () => {
+  it("hash on resolved Voice node chunks[0].hash matches /^[0-9a-f]{64}$/", async () => {
     const tree = makeEpisode([makeVoice("some utterance", "host")]);
     const resolved = await phaseA(tree, { cache, baseDir: tmpDir });
 
@@ -350,9 +355,10 @@ describe("AC6 — validation before synthesis", () => {
       (c): c is SoundstageElement => typeof c === "object" && c !== null && "type" in c,
     );
     const voice = children[0]!;
-    const sourceRef = voice.props["sourceRef"] as { kind: string; hash: string };
-    expect(sourceRef.kind).toBe("cache");
-    expect(sourceRef.hash).toMatch(/^[0-9a-f]{64}$/);
+    // T7: Voice props now have chunks[] instead of sourceRef
+    const chunks = voice.props["chunks"] as Array<{ hash: string }>;
+    expect(chunks.length).toBeGreaterThanOrEqual(1);
+    expect(chunks[0]!.hash).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
@@ -392,7 +398,9 @@ describe("Rate conversion — native 24kHz → master rate scaling", () => {
       (c): c is SoundstageElement => typeof c === "object" && c !== null && "type" in c,
     );
     const voiceEl = children[0]!;
-    const resolvedDuration = voiceEl.props["durationSamples"] as number;
+    // T7: Voice props now have chunks[]; durationSamples is at master rate
+    const chunks = voiceEl.props["chunks"] as Array<{ durationSamples: number }>;
+    const resolvedDuration = chunks[0]!.durationSamples;
 
     const expected = Math.round(nativeDurationSamples! * 48000 / 24000);
     expect(resolvedDuration).toBe(expected);
@@ -429,7 +437,9 @@ describe("Rate conversion — native 24kHz → master rate scaling", () => {
       (c): c is SoundstageElement => typeof c === "object" && c !== null && "type" in c,
     );
     const voiceEl = children[0]!;
-    const resolvedDuration = voiceEl.props["durationSamples"] as number;
+    // T7: Voice props now have chunks[]; durationSamples is at master rate
+    const chunks = voiceEl.props["chunks"] as Array<{ durationSamples: number }>;
+    const resolvedDuration = chunks[0]!.durationSamples;
 
     expect(resolvedDuration).toBe(nativeDurationSamples!);
   });

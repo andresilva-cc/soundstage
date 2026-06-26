@@ -52,11 +52,12 @@ async function renderChangelog(
   const adapter = new SyntheticAdapter();
   const cache = new CacheLayer(adapter, cacheDirPath);
 
-  const hitVoiceUnitIds = new Set<number>();
-  let totalVoices = 0;
-  function onVoiceSynthesized(voiceUnitId: number, hit: boolean): void {
-    totalVoices = Math.max(totalVoices, voiceUnitId + 1);
-    if (hit) hitVoiceUnitIds.add(voiceUnitId);
+  const chunkStats = new Map<number, { total: number; hits: number }>();
+  function onVoiceSynthesized(voiceUnitId: number, _chunkIndex: number, _chunkTotal: number, hit: boolean): void {
+    const stats = chunkStats.get(voiceUnitId) ?? { total: 0, hits: 0 };
+    stats.total++;
+    if (hit) stats.hits++;
+    chunkStats.set(voiceUnitId, stats);
   }
 
   const tree = await loadTsx(absFile);
@@ -91,7 +92,7 @@ async function renderChangelog(
     await rm(tmpMixDir, { recursive: true, force: true });
   }
 
-  const report = buildCacheReport(ir, hitVoiceUnitIds, totalVoices);
+  const report = buildCacheReport(ir, chunkStats);
   const cacheReport = formatCacheReport(report);
 
   return { wavPath, mp3Path, cacheReport };
@@ -195,5 +196,11 @@ describe("changelog.tsx --draft render", () => {
     expect(result.cacheReport).toContain("Intro");
     expect(result.cacheReport).toContain("What's New");
     expect(result.cacheReport).toContain("Outro");
+  });
+
+  it("cache report shows correct chunk count (6 total: 2 per Voice × 3 voices)", () => {
+    // Each of the 3 Voice nodes splits into exactly 2 sentence chunks (T7 segmentation).
+    // This catches wiring regressions: if segment() is bypassed, total would be 3 not 6.
+    expect(result.cacheReport).toContain("total: 0/6 chunks cached");
   });
 });

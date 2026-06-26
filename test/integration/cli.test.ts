@@ -82,11 +82,12 @@ async function renderFixture(
   const adapter = new SyntheticAdapter();
   const cache = new CacheLayer(adapter, cacheDirPath, { noCache });
 
-  const hitVoiceUnitIds = new Set<number>();
-  let totalVoices = 0;
-  function onVoiceSynthesized(voiceUnitId: number, hit: boolean): void {
-    totalVoices = Math.max(totalVoices, voiceUnitId + 1);
-    if (hit) hitVoiceUnitIds.add(voiceUnitId);
+  const chunkStats = new Map<number, { total: number; hits: number }>();
+  function onVoiceSynthesized(voiceUnitId: number, _chunkIndex: number, _chunkTotal: number, hit: boolean): void {
+    const stats = chunkStats.get(voiceUnitId) ?? { total: 0, hits: 0 };
+    stats.total++;
+    if (hit) stats.hits++;
+    chunkStats.set(voiceUnitId, stats);
   }
 
   // Load .tsx.
@@ -136,7 +137,7 @@ async function renderFixture(
   }
 
   // Build cache report.
-  const report = buildCacheReport(ir, hitVoiceUnitIds, totalVoices);
+  const report = buildCacheReport(ir, chunkStats);
   const stdout =
     "soundstage: cache report\n" + formatCacheReport(report) + "\n" +
     `soundstage: render complete → ${stem}.wav, ${stem}.mp3\n`;
@@ -254,10 +255,10 @@ describe("CLI render (draft/synthetic adapter)", () => {
   });
 
   it("first run: all voices are re-synth (cold cache)", () => {
-    // cold cache → 0 hits.
-    expect(result.stdout).toContain("re-synth");
+    // cold cache → 0 hits → "total: 0/2 chunks cached".
+    expect(result.stdout).toContain("0/2 chunks cached");
     // No hits on cold run.
-    expect(result.stdout).not.toContain("2/2 cached");
+    expect(result.stdout).not.toContain("2/2 chunks cached");
   });
 });
 
@@ -281,19 +282,19 @@ describe("second run: warm cache shows hits", () => {
     secondResult = await renderFixture(FIXTURE_SIMPLE, warmOutDir, warmCacheDir);
   });
 
-  it("second run stdout reports cached (not re-synth)", () => {
-    // First run: re-synth.
-    expect(firstResult.stdout).toContain("re-synth");
+  it("second run stdout reports all chunks cached", () => {
+    // First run: cold cache → 0/2 chunks cached.
+    expect(firstResult.stdout).toContain("0/2 chunks cached");
 
     // Second run: both segments show as cached.
-    expect(secondResult.stdout).toContain("cached");
-    expect(secondResult.stdout).not.toContain("re-synth · ");
-    // total shows 2/2 cached.
-    expect(secondResult.stdout).toContain("total: 2/2 cached");
+    expect(secondResult.stdout).toContain("chunks cached");
+    // total shows 2/2 chunks cached.
+    expect(secondResult.stdout).toContain("total: 2/2 chunks cached");
   });
 
-  it("second run: re-synth count is 0", () => {
-    expect(secondResult.stdout).toContain(", 0 re-synth");
+  it("second run: all chunks are cache hits (no re-synth)", () => {
+    // The new format doesn't show a re-synth count separately; all 2/2 = full hit.
+    expect(secondResult.stdout).toContain("total: 2/2 chunks cached");
   });
 });
 
@@ -320,16 +321,15 @@ describe("--no-cache flag", () => {
     });
   });
 
-  it("--no-cache run reports all re-synth", () => {
-    expect(result.stdout).toContain("re-synth");
-    // With --no-cache, no hits.
-    expect(result.stdout).toContain("total: 0/2 cached, 2 re-synth");
+  it("--no-cache run reports all chunks as misses", () => {
+    // With --no-cache, no hits → 0/2 chunks cached.
+    expect(result.stdout).toContain("total: 0/2 chunks cached");
   });
 
   it("--no-cache still writes cache entries (third run is a warm hit)", async () => {
     // Third run without --no-cache — entries written by --no-cache run are usable.
     const thirdResult = await renderFixture(FIXTURE_SIMPLE, noCacheOutDir, noCacheDir);
-    expect(thirdResult.stdout).toContain("total: 2/2 cached");
+    expect(thirdResult.stdout).toContain("total: 2/2 chunks cached");
   });
 });
 

@@ -29,8 +29,8 @@ function voiceNode(
     type: "Voice",
     props: {
       voice: "host",
-      sourceRef: { kind: "cache", path: ".soundstage/cache/abc.wav", hash: "abc", voiceUnitId: 0 },
-      durationSamples,
+      voiceUnitId: 0,
+      chunks: [{ wavPath: ".soundstage/cache/abc.wav", hash: "abc", durationSamples, sampleRate: 48000, hit: false }],
       ...extraProps,
     },
     children: ["some text"],

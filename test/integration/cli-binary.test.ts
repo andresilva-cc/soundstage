@@ -190,8 +190,8 @@ describe.skipIf(!distExists)(
       expect(secondStdout).not.toContain("re-synth ·");
     });
 
-    it("second run total shows 2/2 cached", () => {
-      expect(secondStdout).toContain("total: 2/2 cached");
+    it("second run total shows 2/2 chunks cached", () => {
+      expect(secondStdout).toContain("total: 2/2 chunks cached");
     });
   },
 );
@@ -227,7 +227,7 @@ describe.skipIf(!distExists)(
     }, 120_000);
 
     it("--no-cache run reports all re-synth (0 cache hits)", () => {
-      expect(noCacheStdout).toContain("total: 0/2 cached");
+      expect(noCacheStdout).toContain("total: 0/2 chunks cached");
     });
 
     it("--no-cache run still produces a valid .wav", async () => {

@@ -1,11 +1,12 @@
-// §4.5 — Cache report: per-Segment rollup of Voice cache hit/miss.
-// The cache is keyed per-Voice (one TTS call = one cache entry).
-// The report rolls per-Voice results up by enclosing Segment for readability.
+// §4.5 — Cache report: per-Segment rollup of Voice chunk cache hit/miss.
+// T7: the cache is now keyed per-chunk (one sentence = one cache entry). Each Voice node
+// produces N chunks. The report rolls per-chunk results up by enclosing Segment.
 //
 // voiceUnitId is assigned sequentially in Phase A (0, 1, 2, ...).
 // Each ChapterIR's [startSample, endSample] span covers the voice clips
 // that belong to that Segment. We match voice clips to Segments by checking
-// which IR clips (with sourceRef.voiceUnitId) fall within each chapter span.
+// which IR clips (with sourceRef.voiceUnitId) fall within each chapter span,
+// using the FIRST clip's startSample as the representative position for multi-chunk voices.
 
 import type { IR, ChapterIR } from "../ir/phase-b.js";
 
@@ -15,8 +16,8 @@ import type { IR, ChapterIR } from "../ir/phase-b.js";
 
 export interface SegmentReport {
   title: string;
-  cached: number;
-  reSynth: number;
+  cached: number;   // number of chunk cache hits in this segment
+  reSynth: number;  // number of chunk cache misses (re-synthesized)
 }
 
 export interface CacheReport {
@@ -30,19 +31,19 @@ export interface CacheReport {
 // ---------------------------------------------------------------------------
 
 /**
- * Aggregate per-Voice hit/miss data into a per-Segment cache report.
+ * Aggregate per-chunk hit/miss data into a per-Segment cache report.
  *
  * @param ir          The compiled IR (clips with voiceUnitId, chapters with sample spans).
- * @param hitSet      Set of voiceUnitIds that were cache hits.
- * @param totalVoices Total number of Voice nodes (voiceUnitIds 0..totalVoices-1).
+ * @param chunkStats  Map from voiceUnitId → { total: chunk count, hits: cache hit count }.
+ *                    Built by the CLI's onVoiceSynthesized callback.
  */
 export function buildCacheReport(
   ir: IR,
-  hitSet: ReadonlySet<number>,
-  totalVoices: number,
+  chunkStats: ReadonlyMap<number, { total: number; hits: number }>,
 ): CacheReport {
-  // Build a lookup: voiceUnitId → startSample (from voice-lane IR clips).
-  // This lets us assign each voice unit to its chapter by sample position.
+  // Build a lookup: voiceUnitId → first (minimum) startSample among its clips.
+  // Multi-chunk voices produce multiple clips; we use the first clip's position
+  // to determine which chapter the voice belongs to.
   const voiceUnitToSample = new Map<number, number>();
   for (const clip of ir.clips) {
     if (
@@ -50,7 +51,11 @@ export function buildCacheReport(
       clip.sourceRef.kind === "cache" &&
       clip.sourceRef.voiceUnitId !== undefined
     ) {
-      voiceUnitToSample.set(clip.sourceRef.voiceUnitId, clip.startSample);
+      const id = clip.sourceRef.voiceUnitId;
+      const existing = voiceUnitToSample.get(id);
+      if (existing === undefined || clip.startSample < existing) {
+        voiceUnitToSample.set(id, clip.startSample);
+      }
     }
   }
 
@@ -58,35 +63,33 @@ export function buildCacheReport(
 
   if (chapters.length === 0) {
     // No segments — single flat report.
-    let cached = 0;
-    let reSynth = 0;
-    for (let id = 0; id < totalVoices; id++) {
-      if (hitSet.has(id)) cached++;
-      else reSynth++;
+    let totalCached = 0;
+    let totalReSynth = 0;
+    for (const stats of chunkStats.values()) {
+      totalCached += stats.hits;
+      totalReSynth += stats.total - stats.hits;
     }
+    const total = totalCached + totalReSynth;
     return {
-      segments: totalVoices > 0 ? [{ title: "Uncategorized", cached, reSynth }] : [],
-      totalCached: cached,
-      totalReSynth: reSynth,
+      segments: total > 0 ? [{ title: "Uncategorized", cached: totalCached, reSynth: totalReSynth }] : [],
+      totalCached,
+      totalReSynth,
     };
   }
 
-  // Count hits/misses per chapter index.
+  // Count chunk hits/misses per chapter index.
   const chapterCounts = chapters.map(() => ({ cached: 0, reSynth: 0 }));
 
-  for (let id = 0; id < totalVoices; id++) {
-    const sample = voiceUnitToSample.get(id);
+  for (const [voiceUnitId, stats] of chunkStats) {
+    const sample = voiceUnitToSample.get(voiceUnitId);
     if (sample === undefined) continue;
 
     const chapterIdx = findChapterIndex(chapters, sample);
     if (chapterIdx === -1) continue;
 
     const counts = chapterCounts[chapterIdx]!;
-    if (hitSet.has(id)) {
-      counts.cached++;
-    } else {
-      counts.reSynth++;
-    }
+    counts.cached += stats.hits;
+    counts.reSynth += stats.total - stats.hits;
   }
 
   let totalCached = 0;
@@ -139,13 +142,12 @@ function findChapterIndex(chapters: readonly ChapterIR[], sample: number): numbe
 /**
  * Format the cache report as human-readable lines printed to stdout.
  *
- * Per-segment line examples:
- *   "  Intro: 2/2 cached"
- *   "  Topic 2: 1/3 re-synth · 2 cached"
- *   "  Outro: 1/1 re-synth"
+ * Per-segment line example:
+ *   "  Intro: 5/7 chunks cached"
+ *   "  Outro: 2/2 chunks cached"
  *
  * Summary line:
- *   "  total: 5/7 cached, 2 re-synth"
+ *   "  total: 7/9 chunks cached"
  */
 export function formatCacheReport(report: CacheReport): string {
   const lines: string[] = [];
@@ -153,25 +155,14 @@ export function formatCacheReport(report: CacheReport): string {
   for (const seg of report.segments) {
     const total = seg.cached + seg.reSynth;
     if (total === 0) continue;
-
-    let status: string;
-    if (seg.reSynth === 0) {
-      status = `${seg.cached}/${total} cached`;
-    } else if (seg.cached === 0) {
-      status = `${seg.reSynth}/${total} re-synth`;
-    } else {
-      status = `${seg.reSynth}/${total} re-synth · ${seg.cached} cached`;
-    }
-    lines.push(`  ${seg.title}: ${status}`);
+    lines.push(`  ${seg.title}: ${seg.cached}/${total} chunks cached`);
   }
 
   const total = report.totalCached + report.totalReSynth;
   if (total === 0) {
     lines.push("  (no voice units)");
   } else {
-    lines.push(
-      `  total: ${report.totalCached}/${total} cached, ${report.totalReSynth} re-synth`,
-    );
+    lines.push(`  total: ${report.totalCached}/${total} chunks cached`);
   }
 
   return lines.join("\n");

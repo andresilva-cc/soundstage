@@ -9,6 +9,7 @@ import { COMPONENT_NAMES } from "../components/types.js";
 import type { EqBand } from "../components/types.js";
 import { SoundstageError } from "./errors.js";
 import { SCHEMA_VERSION } from "../schema-version.js";
+import type { ChunkResult } from "./phase-a.js";
 
 const MAX_DEPTH = 100;
 
@@ -221,8 +222,12 @@ function walkSiblings(
     // Use the captured precedingCrossfadeClip — not a re-scan — to avoid the
     // wrong-clip-in-chain bug when multiple crossfades appear in sequence.
     if (pendingCrossfadeOverlap !== null && precedingCrossfadeClip !== null) {
-      // For Segment nodes, the crossfade blends into the segment's FIRST audio
-      // clip (not the whole segment). Resolve the boundary clip duration.
+      // The acrossfade filter blends the LAST preceding clip with the FIRST following
+      // clip only. The physical constraint is: overlap ≤ firstFollowingClip.durationSamples.
+      // For Segment nodes, "first following clip" is the first voice clip of that Segment.
+      // For multi-chunk Voice nodes (T7), "first following clip" is the first CHUNK —
+      // the same logic applies; there is no summing across chunks here because acrossfade
+      // can only consume as many samples as the first clip provides.
       const firstFollowingClip = state.clips
         .slice(clipsBeforeNode)
         .find(c => c.trackId === "voice");
@@ -260,34 +265,38 @@ function placeNode(
   const typeName = typeof el.type === "string" ? el.type : undefined;
 
   // --- Voice ---
+  // T7: Voice props now carry voiceUnitId + chunks[] (one entry per sentence chunk).
+  // One ClipIR is emitted per chunk; all chunks share the same voiceUnitId.
+  // Clips are placed contiguously: chunk[i+1].startSample = chunk[i].startSample + chunk[i].durationSamples.
   if (typeName === COMPONENT_NAMES.Voice) {
-    const sourceRef = el.props["sourceRef"] as {
-      kind: "cache";
-      path: string;
-      hash: string;
-      voiceUnitId: number;
-    };
-    const durationSamples = el.props["durationSamples"] as number;
+    const voiceUnitId = el.props["voiceUnitId"] as number;
+    const chunks = el.props["chunks"] as ChunkResult[];
     const pan = el.props["pan"] as number | undefined;
     const effects = lowerEffects(el.props);
 
-    const clip: ClipIR = {
-      id: `c${state.clipCounter.value++}`,
-      sourceRef: {
-        kind: "cache",
-        path: sourceRef.path,
-        hash: sourceRef.hash,
-        voiceUnitId: sourceRef.voiceUnitId,
-      },
-      trackId: "voice",
-      startSample,
-      durationSamples,
-      gainDb: 0.0,
-      ...(pan !== undefined ? { pan } : {}),
-      ...(effects !== undefined ? { effects } : {}),
-    };
-    state.clips.push(clip);
-    return durationSamples;
+    let cursor = startSample;
+    for (const chunk of chunks) {
+      const clip: ClipIR = {
+        id: `c${state.clipCounter.value++}`,
+        sourceRef: {
+          kind: "cache",
+          path: chunk.wavPath,
+          hash: chunk.hash,
+          voiceUnitId,
+        },
+        trackId: "voice",
+        startSample: cursor,
+        durationSamples: chunk.durationSamples,
+        gainDb: 0.0,
+        ...(pan !== undefined ? { pan } : {}),
+        ...(effects !== undefined ? { effects } : {}),
+      };
+      state.clips.push(clip);
+      cursor += chunk.durationSamples;
+    }
+
+    const totalDuration = chunks.reduce((sum, c) => sum + c.durationSamples, 0);
+    return totalDuration;
   }
 
   // --- Clip ---

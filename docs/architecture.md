@@ -66,7 +66,8 @@ All time/positions are in **integer samples** at the master sample rate (`sample
 
 ```jsonc
 {
-  "schemaVersion": 3,              // bumped on cache-key changes or breaking IR-shape changes → invalidates cache; additive optional fields (e.g. effects) do NOT require a bump
+  "schemaVersion": 4,              // bumped on cache-key changes or breaking IR-shape changes → invalidates cache; additive optional fields (e.g. effects) do NOT require a bump
+                                   // v4: auto text segmentation — cache is now per-sentence-chunk, not per-Voice; multiple ClipIRs may share the same voiceUnitId (one per chunk)
   "sampleRate": 48000,             // master rate; all sample positions are at this rate
   "channels": 1,                   // output channel count: 1 = mono (default), 2 = stereo (<Episode channels={2}>)
   "episode": {
@@ -276,7 +277,7 @@ Error codes:
 
 The cache is the heart of Soundstage's value: an edit re-synthesizes only the changed `<Voice>`, and (with a pinned cache) the same source renders byte-identically.
 
-**Granularity (resolved — see Open Decision 2):** the cache is keyed **per-`<Voice>`** — one TTS call = one cache entry. The **cache report** is rolled up **per-`<Segment>`** for human readability (e.g. `Intro: 2/2 cached · Topic 2: 1/3 re-synth`).
+**Granularity (v4, resolved — see Open Decision 2):** the cache is keyed **per sentence chunk** within a `<Voice>` — one chunk = one TTS call = one cache entry. A multi-sentence `<Voice>` text is split into N chunks by `segment()` (period/question/exclamation boundaries; see §5.7 for the algorithm), each synthesized and cached independently. This enables **incremental re-render**: editing one sentence in a long `<Voice>` re-synthesizes only the changed chunk. Each chunk produces one `ClipIR` in the IR; multiple ClipIRs sharing the same `voiceUnitId` are placed contiguously and together form the complete voice unit. The **cache report** aggregates chunk hits/misses per `<Segment>` for human readability (e.g. `Intro: 5/7 chunks cached`).
 
 **Key derivation:**
 

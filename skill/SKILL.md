@@ -234,7 +234,30 @@ npx soundstage feed --config soundstage-feed.json
 
 ---
 
-### 6. Interactive HTML player with waveform
+### 6. Subtitle and transcript export
+
+Add `--transcript` to generate `.srt`, `.vtt`, and `.txt` subtitle/transcript files:
+
+```sh
+npx soundstage render episode.tsx --final --transcript
+# → episode.wav, episode.mp3 (as usual)
+# → episode.srt              (SubRip subtitles — for video players, Premiere, etc.)
+# → episode.vtt              (WebVTT subtitles — for browsers, YouTube captions)
+# → episode.txt              (plain-text transcript — for show notes, SEO)
+```
+
+Cue text is the **original authored text** from each `<Voice>` block — exactly what you wrote, sentence by sentence. Timing comes from the per-sentence chunk positions in the IR (Phase 2 T7 sentence segmentation), so cues are sentence-granular, not word-granular.
+
+`--transcript` is composable with `--player`:
+
+```sh
+npx soundstage render episode.tsx --final --transcript --player
+# → all five artifacts generated in one pass
+```
+
+The transcript pass is pure text (no ffmpeg, no network) and always regenerates on a streaming skip.
+
+### 7. Interactive HTML player with waveform
 
 Add `--player` to generate a self-contained HTML player alongside your episode files:
 
@@ -247,7 +270,7 @@ npx soundstage render episode.tsx --final --player
 
 The HTML file is fully self-contained — waveform is base64-inlined, JS/CSS are inlined, no CDN. The mp3 is referenced by relative filename so they must stay in the same directory. Chapter buttons jump to the correct position using pre-computed timestamps (`startSample / sampleRate` as a literal float).
 
-### 7. Cloud TTS provider (OpenAI)
+### 8. Cloud TTS provider (OpenAI)
 
 ```sh
 export OPENAI_API_KEY=sk-...

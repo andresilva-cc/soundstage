@@ -22,6 +22,7 @@ import { runChapterPostPass } from "../compiler/chapters.js";
 import { buildCacheReport, formatCacheReport } from "./report.js";
 import { generateWaveform, generatePlayer } from "../compiler/player.js";
 import { readRenderState, writeRenderState, hashIR } from "./render-state.js";
+import { extractVoiceTexts, generateTranscriptCues, formatSrt, formatVtt, formatTxt } from "../compiler/transcript.js";
 import { validateFeedConfig, buildFeedXml } from "../compiler/feed.js";
 import type { EpisodeMeta } from "../compiler/feed.js";
 import { probeFileDuration } from "../probe/index.js";
@@ -136,6 +137,7 @@ interface RenderOptions {
   provider?: string; // --provider <kokoro|openai|elevenlabs>; only meaningful with --final
   player?: boolean; // --player generates waveform.png + <stem>-player.html
   force?: boolean; // --force bypasses the IR hash check (always re-renders)
+  transcript?: boolean; // --transcript generates .srt, .vtt, .txt subtitle files
 }
 
 async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
@@ -187,6 +189,11 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
   } catch (err) {
     handleError(err);
   }
+
+  // Extract original authored text per voice unit for transcript generation (T1).
+  // Called after phaseA (resolvedTree has originalText on each ChunkResult) and
+  // before phaseB so the resolved tree is still in scope.
+  const voiceTexts = extractVoiceTexts(resolvedTree);
 
   // 3. Phase B → IR.
   let ir;
@@ -250,8 +257,25 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
           skipPlayerOutputs = `, ${stem}-player.html, waveform.png`;
         }
 
+        // Transcript artifacts are fast/pure — regenerate from in-memory data on skip.
+        // Errors are non-fatal: the skip already reported outputs up to date.
+        let skipTranscriptOutputs = "";
+        if (opts.transcript) {
+          try {
+            const cues = generateTranscriptCues(ir, voiceTexts);
+            await writeFile(join(outDir, `${stem}.srt`), formatSrt(cues, ir.sampleRate));
+            await writeFile(join(outDir, `${stem}.vtt`), formatVtt(cues, ir.sampleRate));
+            await writeFile(join(outDir, `${stem}.txt`), formatTxt(ir, cues));
+            skipTranscriptOutputs = `, ${stem}.srt, ${stem}.vtt, ${stem}.txt`;
+          } catch (transcriptErr) {
+            printError(
+              `soundstage: warning: could not generate transcript files: ${transcriptErr instanceof Error ? transcriptErr.message : String(transcriptErr)}`,
+            );
+          }
+        }
+
         process.stdout.write(
-          `soundstage: no changes — outputs up to date${skipPlayerOutputs}\n`,
+          `soundstage: no changes — outputs up to date${skipPlayerOutputs}${skipTranscriptOutputs}\n`,
         );
         return;
       }
@@ -311,6 +335,22 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
         `soundstage: warning: could not write render-state.json: ${stateErr instanceof Error ? stateErr.message : String(stateErr)}`,
       );
     }
+
+    // 8.6. (Optional) Generate subtitle/transcript files when --transcript is set.
+    // Pure text from in-memory data — no ffmpeg, no network. Errors are
+    // non-fatal (the render is already complete; wav/mp3 are written).
+    if (opts.transcript) {
+      try {
+        const cues = generateTranscriptCues(ir, voiceTexts);
+        await writeFile(join(outDir, `${stem}.srt`), formatSrt(cues, ir.sampleRate));
+        await writeFile(join(outDir, `${stem}.vtt`), formatVtt(cues, ir.sampleRate));
+        await writeFile(join(outDir, `${stem}.txt`), formatTxt(ir, cues));
+      } catch (transcriptErr) {
+        printError(
+          `soundstage: warning: could not generate transcript files: ${transcriptErr instanceof Error ? transcriptErr.message : String(transcriptErr)}`,
+        );
+      }
+    }
   } finally {
     if (tmpDir !== undefined) {
       await rm(tmpDir, { recursive: true, force: true });
@@ -339,9 +379,10 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
   process.stdout.write("soundstage: cache report\n");
   process.stdout.write(formatCacheReport(report) + "\n");
 
-  // 11. Success message.
+  // 11. Success message (include transcript filenames when --transcript is set).
+  const transcriptOutputs = opts.transcript ? `, ${stem}.srt, ${stem}.vtt, ${stem}.txt` : "";
   process.stdout.write(
-    `soundstage: render complete → ${stem}.wav, ${stem}.mp3${playerOutputs}\n`,
+    `soundstage: render complete → ${stem}.wav, ${stem}.mp3${playerOutputs}${transcriptOutputs}\n`,
   );
 }
 
@@ -369,6 +410,7 @@ program
   )
   .option("--player", "Generate waveform.png + interactive HTML player alongside episode files")
   .option("--force", "Re-render even when IR is unchanged (bypass hash check)")
+  .option("--transcript", "Generate .srt, .vtt, and .txt subtitle/transcript files")
   .action(async (file: string, opts: RenderOptions) => {
     // Validate flag combinations.
     if (opts.draft && opts.final) {

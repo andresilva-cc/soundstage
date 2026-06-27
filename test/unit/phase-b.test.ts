@@ -33,7 +33,7 @@ function voiceNode(durationSamples: number, voiceUnitId = 0, hash = "abc123"): S
     props: {
       voice: "host",
       voiceUnitId,
-      chunks: [{ wavPath: `.soundstage/cache/${hash}.wav`, hash, durationSamples, sampleRate: 48000, hit: false }],
+      chunks: [{ wavPath: `.soundstage/cache/${hash}.wav`, hash, durationSamples, sampleRate: 48000, hit: false, originalText: "some text." }],
     },
     children: ["some text"],
   };

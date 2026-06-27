@@ -534,7 +534,38 @@ ffmpeg -i episode.mp3 -lavfi "showwavespic=s=1200x120:colors=steelblue:filter=pe
 
 All `--player` logic lives in `src/compiler/player.ts`. If `generateWaveform` fails (e.g. ffmpeg not found), the CLI surfaces the error to stderr and exits with code 3 (ffmpeg error path).
 
-### 6.2 `soundstage feed` — podcast RSS feed
+### 6.2 `--transcript` — subtitle and transcript export
+
+The `--transcript` flag generates three subtitle/transcript artifacts alongside the episode outputs:
+
+```sh
+npx soundstage render episode.tsx --final --transcript
+# → episode.wav      (byte-identical WAV master)
+# → episode.mp3      (navigable chapters)
+# → episode.srt      (SubRip subtitles)
+# → episode.vtt      (WebVTT subtitles)
+# → episode.txt      (plain-text transcript)
+```
+
+**This is a pure IR → text operation** — no ffmpeg, no network. All timing comes from per-chunk `ClipIR` sample positions on the voice track (sentence-granular, from Phase 2 T7 segmentation).
+
+**Cue text source:** `ChunkResult.originalText` — the raw authored text as produced by `segment()` (CRLF-normalized but NOT Unicode-NFC-normalized, NOT whitespace-collapsed). This is the text the author wrote, not the cache-normalized form. Example: a `<Voice>` containing `"Hello   world."` displays `"Hello   world."` in subtitles even though the cache key normalizes the double-space.
+
+**Timing source:** each cue's `startSample` / `endSample` comes from the corresponding `ClipIR` on the voice track (`clip.startSample` and `clip.startSample + clip.durationSamples`). A `<Crossfade>` shifts the following clip's `startSample` earlier, which can produce overlapping cues without correction; the transcript module clamps each cue's `endSample` to the next cue's `startSample` to prevent overlap.
+
+**Skipped clips:** `<Clip src>` file clips and `<Silence>` clips produce no cue — they have no authored text.
+
+**Format details:**
+- **`.srt`** (SubRip): sequence-numbered, comma decimal separator (`HH:MM:SS,mmm --> HH:MM:SS,mmm`).
+- **`.vtt`** (WebVTT): starts with `WEBVTT`, dot decimal separator (`HH:MM:SS.mmm --> HH:MM:SS.mmm`), no sequence numbers.
+- **`.txt`** (plain text): if the episode has `<Segment>` chapters, each chapter's cues are prefixed with `## <title>`; otherwise cue texts are joined by blank lines.
+
+**Composable with `--player`:** both flags may be set simultaneously; all five artifacts are generated.
+
+**Streaming skip behavior:** transcript files are always regenerated on a streaming skip (same rationale as `--player` — pure text generation from in-memory data is fast).
+
+All transcript logic lives in `src/compiler/transcript.ts`. `ChunkResult.originalText` is populated in Phase A and lives in the resolved tree only — it never reaches the IR or the cache key, so `SCHEMA_VERSION` is unaffected.
+### 6.3 `soundstage feed` — podcast RSS feed
 
 The `soundstage feed` subcommand generates a spec-compliant RSS 2.0 + Apple Podcasts feed XML from a `soundstage-feed.json` config file:
 

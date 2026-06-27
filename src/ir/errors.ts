@@ -10,8 +10,7 @@ export type ErrorCode =
   | "E_ARTWORK_NOT_FOUND"
   | "E_NO_DEFAULT_EXPORT"
   | "E_ADAPTER_MISSING_KEY" // thrown by cloud adapters when required API key env var is absent
-  | "E_ADAPTER_REQUEST_FAILED" // thrown by cloud adapters when the API request fails after all retries
-  | "E_CACHE_CONTENTION"; // cache entry locked by concurrent process — retry the render
+  | "E_ADAPTER_REQUEST_FAILED"; // thrown by cloud adapters when the API request fails after all retries
 
 export class SoundstageError extends Error {
   readonly code: ErrorCode;

@@ -126,37 +126,42 @@ describe("CacheLayer — cache hit", () => {
 });
 
 describe("CacheLayer — atomicity", () => {
-  it("pre-existing .wav.tmp does NOT cause a hit — adapter is still called", async () => {
+  it("after a successful miss, {hash}.wav and {hash}.json exist — no .tmp files remain", async () => {
     const synthSpy = vi.spyOn(adapter, "synth");
 
-    // Derive what the hash key would be to create the .tmp file manually
-    const { deriveKey } = await import("../../src/adapters/cache/key.js");
-    const hash = deriveKey(baseReq(), adapter);
-    const tmpPath = join(tmpDir, `${hash}.wav.tmp`);
-
-    // Pre-create the .tmp file with garbage content (simulates leftover from crashed write)
-    await writeFile(tmpPath, Buffer.from("garbage"));
-
-    // Should treat as miss: adapter called, .tmp overwritten
     const result = await cache.get(baseReq());
     expect(synthSpy).toHaveBeenCalledOnce();
     expect(result.durationSamples).toBeGreaterThan(0);
 
-    // After the call, the .wav should exist and the .tmp should NOT remain as garbage
-    // (it may no longer exist, or it may be the final wav — either way the final .wav exists)
+    // Final wav committed via atomic rename.
     expect(existsSync(result.wavPath)).toBe(true);
+    // Sidecar written before rename.
+    const jsonPath = result.wavPath.replace(/\.wav$/, ".json");
+    expect(existsSync(jsonPath)).toBe(true);
+
+    // No .tmp files leaked (each write uses a unique name that is renamed or cleaned up).
+    const { readdirSync } = await import("node:fs");
+    const leaked = readdirSync(tmpDir).filter((f: string) => f.endsWith(".tmp"));
+    expect(leaked).toHaveLength(0);
   });
 
-  it("final .wav is written atomically (rename, not direct write)", async () => {
-    // After a cache miss completes, .wav.tmp should not exist
+  it("stale unrelated .tmp in the cache dir does not affect hit/miss logic", async () => {
+    // Place a file that looks like an old unique-tmp from a crashed prior run.
+    // The new code never checks for a shared {hash}.wav.tmp, so this must not
+    // cause a spurious hit or crash.
     const { deriveKey } = await import("../../src/adapters/cache/key.js");
     const hash = deriveKey(baseReq(), adapter);
-    const tmpPath = join(tmpDir, `${hash}.wav.tmp`);
+    const staleTmp = join(tmpDir, `${hash}.wav.deadbeef.tmp`);
+    await writeFile(staleTmp, Buffer.from("garbage"));
 
-    await cache.get(baseReq());
+    const synthSpy = vi.spyOn(adapter, "synth");
+    const result = await cache.get(baseReq());
 
-    // .tmp should be gone after atomic rename
-    expect(existsSync(tmpPath)).toBe(false);
+    // Should be treated as a miss (stale tmp not a hit signal).
+    expect(synthSpy).toHaveBeenCalledOnce();
+    expect(result.durationSamples).toBeGreaterThan(0);
+    // Final wav exists.
+    expect(existsSync(result.wavPath)).toBe(true);
   });
 });
 

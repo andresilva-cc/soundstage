@@ -201,7 +201,42 @@ npx soundstage render episode.tsx --final --player
 
 The HTML file is fully self-contained — waveform is base64-inlined, JS/CSS are inlined, no CDN. The mp3 is referenced by relative filename so they must stay in the same directory. Chapter buttons jump to the correct position using pre-computed timestamps (`startSample / sampleRate` as a literal float).
 
-### 7. Cloud TTS provider (OpenAI)
+### 7. Social audiogram video
+
+Add `--video` to generate an animated mp4 alongside your episode files:
+
+```sh
+npx soundstage render episode.tsx --final --video
+# → episode.wav, episode.mp3 (as usual)
+# → episode-audiogram.mp4    (animated waveform video, square 1080×1080 by default)
+```
+
+Aspect presets and accent color:
+
+```sh
+# Landscape (YouTube / Twitter)
+npx soundstage render episode.tsx --final --video --video-aspect landscape
+
+# Vertical (TikTok / Instagram Reels)
+npx soundstage render episode.tsx --final --video --video-aspect vertical
+
+# Custom accent color
+npx soundstage render episode.tsx --final --video --video-color "#e11d48"
+
+# With logo PNG in the top-right corner
+npx soundstage render episode.tsx --final --video --video-logo ./logo.png
+```
+
+Compose with `--player` to produce all artifacts in one pass:
+
+```sh
+npx soundstage render episode.tsx --final --player --video
+# → episode.mp3, waveform.png, episode-player.html, episode-audiogram.mp4
+```
+
+The mp4 is a lossy derived artifact — it is NOT re-encoded on unchanged re-runs if the file already exists (video encoding is expensive). Delete the mp4 to force a re-encode. Errors exit with code 3.
+
+### 8. Cloud TTS provider (OpenAI)
 
 ```sh
 export OPENAI_API_KEY=sk-...

@@ -21,6 +21,8 @@ import { encodeMp3 } from "../compiler/encode.js";
 import { runChapterPostPass } from "../compiler/chapters.js";
 import { buildCacheReport, formatCacheReport } from "./report.js";
 import { generateWaveform, generatePlayer } from "../compiler/player.js";
+import { generateAudiogram } from "../compiler/audiogram.js";
+import type { AspectPreset } from "../compiler/audiogram.js";
 import { readRenderState, writeRenderState, hashIR } from "./render-state.js";
 
 // ---------------------------------------------------------------------------
@@ -106,7 +108,8 @@ function handleError(err: unknown): never {
       err.message.includes("mix pass failed") ||
       err.message.startsWith("loudnorm") ||
       err.message.startsWith("mp3 encode failed") ||
-      err.message.startsWith("waveform generation failed");
+      err.message.startsWith("waveform generation failed") ||
+      err.message.startsWith("audiogram generation failed:");
     if (isffmpegError) {
       printError(`soundstage: error[E_FFMPEG]: ${err.message}`);
       process.exit(EXIT_FFMPEG_ERROR);
@@ -133,6 +136,10 @@ interface RenderOptions {
   provider?: string; // --provider <kokoro|openai|elevenlabs>; only meaningful with --final
   player?: boolean; // --player generates waveform.png + <stem>-player.html
   force?: boolean; // --force bypasses the IR hash check (always re-renders)
+  video?: boolean; // --video generates <stem>-audiogram.mp4
+  videoAspect?: string; // --video-aspect <square|landscape|vertical>
+  videoColor?: string; // --video-color <hex> waveform accent color
+  videoLogo?: string; // --video-logo <path> PNG logo overlay
 }
 
 async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
@@ -141,6 +148,33 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
   const stem = basename(absFile, extname(absFile));
   const outDir = opts.out !== undefined ? resolve(opts.out) : baseDir;
   const noCache = !opts.cache;
+
+  // Validate --video-aspect before any other work.
+  const VALID_ASPECTS = ["square", "landscape", "vertical"] as const;
+  if (opts.videoAspect !== undefined && !VALID_ASPECTS.includes(opts.videoAspect as AspectPreset)) {
+    printError(
+      `soundstage: error: --video-aspect must be one of: ${VALID_ASPECTS.join(", ")} (got "${opts.videoAspect}")`,
+    );
+    process.exit(EXIT_USER_ERROR);
+  }
+
+  // Validate --video-color is a hex color before any other work.
+  if (opts.videoColor !== undefined && !/^#?[0-9a-fA-F]{6}$/.test(opts.videoColor)) {
+    printError(
+      `soundstage: error: --video-color must be a 6-digit hex color (e.g. #2563eb or 2563eb), got "${opts.videoColor}"`,
+    );
+    process.exit(EXIT_USER_ERROR);
+  }
+
+  // Validate --video-logo file exists before any other work.
+  if (opts.videoLogo !== undefined) {
+    try {
+      await access(resolve(opts.videoLogo));
+    } catch {
+      printError(`soundstage: error: --video-logo: logo file not found: ${opts.videoLogo}`);
+      process.exit(EXIT_USER_ERROR);
+    }
+  }
 
   // Determine adapter mode: --draft = synthetic, --final = real TTS, default = real TTS.
   const mode: AdapterMode = opts.draft ? "draft" : "final";
@@ -247,8 +281,40 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
           skipPlayerOutputs = `, ${stem}-player.html, waveform.png`;
         }
 
+        // Audiogram: skip if mp4 already exists (video encoding is expensive);
+        // generate if mp4 is missing (differs from --player which always regenerates).
+        let skipVideoOutputs = "";
+        if (opts.video) {
+          const mp4Path = join(outDir, `${stem}-audiogram.mp4`);
+          let mp4Exists = false;
+          try {
+            await access(mp4Path);
+            mp4Exists = true;
+          } catch { /* mp4 missing — generate below */ }
+
+          if (mp4Exists) {
+            skipVideoOutputs = `, ${stem}-audiogram.mp4`;
+          } else {
+            try {
+              await generateAudiogram(
+                ir,
+                mp3Path,
+                {
+                  aspect: opts.videoAspect as AspectPreset | undefined,
+                  accentColor: opts.videoColor,
+                  logoPath: opts.videoLogo,
+                },
+                outDir,
+              );
+            } catch (err) {
+              handleError(err);
+            }
+            skipVideoOutputs = `, ${stem}-audiogram.mp4`;
+          }
+        }
+
         process.stdout.write(
-          `soundstage: no changes — outputs up to date${skipPlayerOutputs}\n`,
+          `soundstage: no changes — outputs up to date${skipPlayerOutputs}${skipVideoOutputs}\n`,
         );
         return;
       }
@@ -331,6 +397,28 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
     playerOutputs = `, ${stem}-player.html, waveform.png`;
   }
 
+  // 9.5. (Optional) Generate <stem>-audiogram.mp4 when --video is set.
+  // Runs in the post-finally region (after tmpDir cleanup) because it operates
+  // on the final mp3, not on tmpDir intermediate files.
+  let videoOutputs = "";
+  if (opts.video) {
+    try {
+      await generateAudiogram(
+        ir,
+        mp3Path,
+        {
+          aspect: opts.videoAspect as AspectPreset | undefined,
+          accentColor: opts.videoColor,
+          logoPath: opts.videoLogo,
+        },
+        outDir,
+      );
+    } catch (err) {
+      handleError(err);
+    }
+    videoOutputs = `, ${stem}-audiogram.mp4`;
+  }
+
   // 10. Print cache report.
   const report = buildCacheReport(ir, chunkStats);
   process.stdout.write("soundstage: cache report\n");
@@ -338,7 +426,7 @@ async function runRender(filePath: string, opts: RenderOptions): Promise<void> {
 
   // 11. Success message.
   process.stdout.write(
-    `soundstage: render complete → ${stem}.wav, ${stem}.mp3${playerOutputs}\n`,
+    `soundstage: render complete → ${stem}.wav, ${stem}.mp3${playerOutputs}${videoOutputs}\n`,
   );
 }
 
@@ -366,6 +454,13 @@ program
   )
   .option("--player", "Generate waveform.png + interactive HTML player alongside episode files")
   .option("--force", "Re-render even when IR is unchanged (bypass hash check)")
+  .option("--video", "Generate <stem>-audiogram.mp4 (animated social video)")
+  .option(
+    "--video-aspect <preset>",
+    "Aspect ratio: square (default), landscape, or vertical",
+  )
+  .option("--video-color <hex>", "Waveform accent color (default: #2563eb)")
+  .option("--video-logo <path>", "Logo PNG to overlay in the top-right corner (optional)")
   .action(async (file: string, opts: RenderOptions) => {
     // Validate flag combinations.
     if (opts.draft && opts.final) {

@@ -534,6 +534,33 @@ ffmpeg -i episode.mp3 -lavfi "showwavespic=s=1200x120:colors=steelblue:filter=pe
 
 All `--player` logic lives in `src/compiler/player.ts`. If `generateWaveform` fails (e.g. ffmpeg not found), the CLI surfaces the error to stderr and exits with code 3 (ffmpeg error path).
 
+### 6.2 `--video` — social audiogram (mp4)
+
+The `--video` flag generates an animated social video from the final mp3:
+
+```sh
+npx soundstage render episode.tsx --final --video
+# → episode.wav               (byte-identical WAV master)
+# → episode.mp3               (navigable chapters)
+# → episode-audiogram.mp4     (animated waveform video)
+```
+
+**Fixed template, minimal config.** There is no layout/scene/timeline/animation DSL. The template is intentionally opaque: dark background (`#1a1a2e`), animated waveform centered in the frame, episode title at the top. Optional config:
+
+| Flag | Values | Default |
+|---|---|---|
+| `--video-aspect` | `square`, `landscape`, `vertical` | `square` (1080×1080) |
+| `--video-color` | hex string | `#2563eb` |
+| `--video-logo` | path to PNG | none |
+
+Aspect presets: **square** (1080×1080), **landscape** (1920×1080), **vertical** (1080×1920). Chapter tick marks are drawn at the bottom of the frame when `ir.chapters[]` is non-empty.
+
+**Font — hermetic.** `drawtext` requires a font. `assets/fonts/DejaVuSans.ttf` (Bitstream Vera / DejaVu license — permissive, redistribution allowed) is vendored into the package and passed to every `drawtext` filter via `fontfile=<abs path>`. The tool never reads from fontconfig defaults, so it works in bare CI environments with no system fonts.
+
+**Implementation** — `src/compiler/audiogram.ts`. Uses the same temp filter-script + `execFile` pattern as `runFfmpeg` in `src/compiler/run.ts` (not the inline `-lavfi` pattern in `player.ts`). The pure `buildAudiogramFilter(ir, mp3Filename, opts)` helper returns the filter-complex script string and is unit-testable without ffmpeg.
+
+**mp4 is a lossy derived layer.** The mp4 is always regenerable from the mp3 + IR. Streaming skip: if the mp4 already exists on an unchanged re-run, it is NOT re-encoded (video encoding is expensive). This differs from `--player`, which always regenerates its artifacts (fast). Errors surface as `"audiogram generation failed:"` → exit code 3.
+
 ---
 
 ## 7. Authentication & Authorization

@@ -175,6 +175,52 @@ export default (
 );
 ```
 
+### 6. Podcast RSS feed
+
+Generate an Apple Podcasts-compliant RSS feed from rendered episodes:
+
+```sh
+npx soundstage feed --config soundstage-feed.json
+# → feed.xml  (RSS 2.0 + itunes: + atom: namespaces)
+```
+
+**`soundstage-feed.json` — minimal example:**
+
+```json
+{
+  "show": {
+    "title": "My Podcast",
+    "description": "A weekly show about audio as code.",
+    "author": "André Silva",
+    "email": "andre@example.com",
+    "imageUrl": "https://example.com/cover.jpg",
+    "category": "Technology",
+    "language": "en-us",
+    "baseUrl": "https://example.com/episodes/",
+    "feedUrl": "https://example.com/feed.xml",
+    "link": "https://example.com",
+    "explicit": false
+  },
+  "episodes": [
+    {
+      "file": "./ep1.mp3",
+      "title": "Episode 1: Hello World",
+      "description": "The first episode.",
+      "pubDate": "2026-06-01T00:00:00Z",
+      "guid": "ep1-2026-06-01",
+      "explicit": false
+    }
+  ]
+}
+```
+
+**Key invariants:**
+- `pubDate` is always from config — never wall-clock. Feed output is reproducible given the same config + mp3.
+- `show.category` must be from the Apple Podcasts taxonomy (validated at config-read time; `Technology`, `True Crime`, `Society & Culture`, etc.).
+- `show.email` is optional but omitting it blocks Apple Podcasts submission (a warning is printed to stderr).
+- `enclosure url = show.baseUrl + basename(episode.file)` — the `baseUrl` is normalized to end with `/`.
+- Write to a custom directory: `npx soundstage feed --config soundstage-feed.json --out ./dist`.
+
 ---
 
 ## What the compiler absorbs (don't hand-write these)
@@ -188,7 +234,30 @@ export default (
 
 ---
 
-### 6. Interactive HTML player with waveform
+### 7. Subtitle and transcript export
+
+Add `--transcript` to generate `.srt`, `.vtt`, and `.txt` subtitle/transcript files:
+
+```sh
+npx soundstage render episode.tsx --final --transcript
+# → episode.wav, episode.mp3 (as usual)
+# → episode.srt              (SubRip subtitles — for video players, Premiere, etc.)
+# → episode.vtt              (WebVTT subtitles — for browsers, YouTube captions)
+# → episode.txt              (plain-text transcript — for show notes, SEO)
+```
+
+Cue text is the **original authored text** from each `<Voice>` block — exactly what you wrote, sentence by sentence. Timing comes from the per-sentence chunk positions in the IR (Phase 2 T7 sentence segmentation), so cues are sentence-granular, not word-granular.
+
+`--transcript` is composable with `--player`:
+
+```sh
+npx soundstage render episode.tsx --final --transcript --player
+# → all five artifacts generated in one pass
+```
+
+The transcript pass is pure text (no ffmpeg, no network) and always regenerates on a streaming skip.
+
+### 8. Interactive HTML player with waveform
 
 Add `--player` to generate a self-contained HTML player alongside your episode files:
 
@@ -201,7 +270,7 @@ npx soundstage render episode.tsx --final --player
 
 The HTML file is fully self-contained — waveform is base64-inlined, JS/CSS are inlined, no CDN. The mp3 is referenced by relative filename so they must stay in the same directory. Chapter buttons jump to the correct position using pre-computed timestamps (`startSample / sampleRate` as a literal float).
 
-### 7. Social audiogram video
+### 9. Social audiogram video
 
 Add `--video` to generate an animated mp4 alongside your episode files:
 
@@ -236,7 +305,7 @@ npx soundstage render episode.tsx --final --player --video
 
 The mp4 is a lossy derived artifact — it is NOT re-encoded on unchanged re-runs if the file already exists (video encoding is expensive). Delete the mp4 to force a re-encode. Errors exit with code 3.
 
-### 8. Cloud TTS provider (OpenAI)
+### 10. Cloud TTS provider (OpenAI)
 
 ```sh
 export OPENAI_API_KEY=sk-...

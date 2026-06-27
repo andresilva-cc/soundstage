@@ -11,6 +11,7 @@ import type { ChunkResult } from "../../src/ir/phase-a.js";
 import { CacheLayer } from "../../src/adapters/cache/index.js";
 import { SyntheticAdapter } from "../../src/adapters/synthetic/index.js";
 import type { SoundstageElement } from "../../src/jsx-runtime/index.js";
+import { normalizeText } from "../../src/adapters/cache/canonical.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -193,7 +194,7 @@ describe("Phase A segmentation — single-sentence Voice", () => {
 // ---------------------------------------------------------------------------
 
 describe("ChunkResult type shape", () => {
-  it("ChunkResult has expected fields: wavPath, durationSamples, sampleRate, hash, hit", async () => {
+  it("ChunkResult has expected fields: wavPath, durationSamples, sampleRate, hash, hit, originalText", async () => {
     const typeDir = join(tmpDir, "type-cache");
     await mkdir(typeDir, { recursive: true });
     const typeCache = new CacheLayer(new SyntheticAdapter(), typeDir);
@@ -213,6 +214,39 @@ describe("ChunkResult type shape", () => {
     expect(typeof chunk.sampleRate).toBe("number");
     expect(typeof chunk.hash).toBe("string");
     expect(typeof chunk.hit).toBe("boolean");
+    // FIX 4: originalText must be a string (T1 addition — lives in resolved tree only)
+    expect(typeof chunk.originalText).toBe("string");
+  });
+
+  // FIX 3: whitespace preservation — originalText must carry the authored text as-is
+  // (double spaces survive), while cache-key normalization collapses them.
+  it("chunk.originalText preserves internal whitespace from authored text (double spaces)", async () => {
+    const wsDir = join(tmpDir, "ws-cache");
+    await mkdir(wsDir, { recursive: true });
+    const wsCache = new CacheLayer(new SyntheticAdapter(), wsDir);
+
+    // Voice with double internal space — segment() CRLF-normalizes but does NOT
+    // collapse horizontal whitespace; both chunks must preserve the double space.
+    const text = "Hello   world. Goodbye   world.";
+    const tree = makeEpisode([makeVoice(text)]);
+    const resolved = await phaseA(tree, { cache: wsCache, baseDir: tmpDir });
+
+    const children = resolved.children.filter(
+      (c): c is SoundstageElement => typeof c === "object" && c !== null && "type" in c,
+    );
+    const voice = children[0]!;
+    const chunks = voice.props["chunks"] as ChunkResult[];
+
+    // Both sentences are short (< 40 chars) so they may be merged; either way,
+    // the originalText(s) must contain the triple space, not collapse it.
+    const allOriginalText = chunks.map((c) => c.originalText).join(" ");
+    expect(allOriginalText).toContain("Hello   world.");
+  });
+
+  // FIX 3 (second half): cache-key normalizeText DOES collapse horizontal whitespace
+  it("cache-key normalizeText collapses internal whitespace (double spaces → single)", () => {
+    expect(normalizeText("Hello   world.")).toBe("Hello world.");
+    // Contrast: originalText in the chunk above would still be "Hello   world."
   });
 
   it("chunk.durationSamples is at master rate (scaled from native 24kHz to 48kHz)", async () => {

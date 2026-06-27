@@ -28,6 +28,45 @@ import { SoundstageError } from "../ir/errors.js";
 import { runFfprobe } from "../probe/ffprobe.js";
 
 // ---------------------------------------------------------------------------
+// Chapter index lookup
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the chapter index that contains the given sample position.
+ * Returns -1 if no chapter matches.
+ *
+ * When crossfades between segments cause chapter spans to overlap, a voice clip's
+ * startSample may fall inside multiple chapters. In that case we assign it to the
+ * LATEST-STARTING chapter whose startSample ≤ the sample — this correctly attributes
+ * overlapping-crossfade voices to their structural segment.
+ *
+ * Exported so both src/cli/report.ts (cache report) and src/compiler/transcript.ts
+ * (formatTxt chapter grouping) can share the same logic without a cli→compiler
+ * or compiler→cli dependency.
+ */
+export function findChapterIndex(chapters: readonly ChapterIR[], sample: number): number {
+  let bestIdx = -1;
+  let bestStart = -1;
+  for (let i = 0; i < chapters.length; i++) {
+    const ch = chapters[i]!;
+    if (sample >= ch.startSample && sample < ch.endSample) {
+      if (ch.startSample > bestStart) {
+        bestStart = ch.startSample;
+        bestIdx = i;
+      }
+    }
+  }
+  if (bestIdx !== -1) {
+    return bestIdx;
+  }
+  // Clamp to last chapter for samples at/past the final chapter end.
+  if (chapters.length > 0 && sample >= chapters[chapters.length - 1]!.startSample) {
+    return chapters.length - 1;
+  }
+  return -1;
+}
+
+// ---------------------------------------------------------------------------
 // ms conversion
 // ---------------------------------------------------------------------------
 

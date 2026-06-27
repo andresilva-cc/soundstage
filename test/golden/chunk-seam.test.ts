@@ -72,6 +72,7 @@ function makeChunk(wavPath: string, durationSamples: number, idx: number): Chunk
     sampleRate: 48000,
     hash: `deadbeef${idx.toString(16).padStart(2, "0")}`,
     hit: false,
+    originalText: `chunk ${idx} text.`,
   };
 }
 

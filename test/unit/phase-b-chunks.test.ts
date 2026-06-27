@@ -34,6 +34,7 @@ function multiChunkVoice(
     durationSamples: c.durationSamples,
     sampleRate: 24000,
     hit: false,
+    originalText: "chunk text.",
   }));
   return {
     type: "Voice",
@@ -271,5 +272,21 @@ describe("Crossfade guard against multi-chunk Voice — first chunk is the bound
     ]);
 
     expect(() => phaseB(episode([preceding, crossfade, following]))).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FIX 4: originalText must NOT appear in the IR (it lives in resolved tree only)
+// ---------------------------------------------------------------------------
+
+describe("Phase B IR — originalText is not carried into IR", () => {
+  it("IR JSON has no originalText field even when ChunkResult has originalText", () => {
+    const voice = multiChunkVoice(0, [
+      { durationSamples: 10000, hash: "c1" },
+      { durationSamples: 20000, hash: "c2" },
+    ]);
+    const ir = phaseB(episode([voice]));
+    const serialized = JSON.stringify(ir);
+    expect(serialized).not.toContain("originalText");
   });
 });

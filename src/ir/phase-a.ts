@@ -36,6 +36,10 @@ export type SourceRef = SourceRefCache | SourceRefFile;
  * Per-chunk synthesis result stored in the resolved Voice node's `chunks` prop.
  * `durationSamples` is at the master sample rate (already converted from native TTS rate).
  * `sampleRate` is the native TTS sample rate the adapter returned audio at.
+ * `originalText` is the raw chunk text as produced by segment() — CRLF-normalized but NOT
+ * Unicode-NFC-normalized and NOT whitespace-collapsed. Cue text for subtitles must use this
+ * form (not the cache-key normalization which collapses whitespace). Lives in the Phase A
+ * resolved tree ONLY — it is never carried into the IR.
  */
 export interface ChunkResult {
   wavPath: string;
@@ -43,6 +47,7 @@ export interface ChunkResult {
   sampleRate: number;      // native TTS adapter sample rate
   hash: string;
   hit: boolean;
+  originalText: string;
 }
 
 export interface PhaseAOptions {
@@ -123,6 +128,7 @@ async function resolveNode(
         sampleRate: result.sampleRate,
         hash: result.hash,
         hit: result.hit,
+        originalText: chunkText,
       });
 
       options.onVoiceSynthesized?.(voiceUnitId, chunkIndex, chunkTotal, result.hit);
